@@ -54,7 +54,8 @@ Trust order if they disagree: **source code > Obsidian notes > CLAUDE.md**.
     cyd_2432w328c  cyd_2432w328c_2  cyd_3248s035r  cyd_3248s035c
 
 Out-of-tree (in `firmware/boards/` but NOT in default_envs / release / website):
-`m5_cores3` (bare CoreS3 reference), `diy_marauder` (WiFi Marauder v7).
+`m5_cores3` (bare CoreS3 reference), `diy_marauder` (WiFi Marauder v7),
+`diy_joystick` (bare ESP32-S3 + 2.8" ILI9341 SPI TFT + KY-023 analog joystick nav).
 Details in [[board-matrix]].
 
 ## Git policy
