@@ -146,7 +146,7 @@ bool NRF24Screen::inhibitPowerSave() {
 }
 bool NRF24Screen::inhibitPowerOff() {
   return _state == STATE_JAMMER_RUNNING || _state == STATE_SPECTRUM ||
-         _state == STATE_MJ_SCAN;
+         _state == STATE_MJ_SCAN || _state == STATE_RF_TEST_TX;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -156,7 +156,7 @@ bool NRF24Screen::inhibitPowerOff() {
 void NRF24Screen::_showMenu() {
   _state = STATE_MENU;
   snprintf(_titleBuf, sizeof(_titleBuf), "NRF24L01");
-  setItems(_mainItems, 3, _menuReturnIndex);
+  setItems(_mainItems, 4, _menuReturnIndex);
 }
 
 bool NRF24Screen::_radioBegin() {
@@ -210,6 +210,10 @@ void NRF24Screen::onItemSelected(uint8_t index) {
     } else if (index == 2) {
       // ── MouseJack ─────────────────────────────────────────
       _setupMjScan();
+
+    } else if (index == 3) {
+      // ── RF Test TX ────────────────────────────────────────
+      _startRfTest();
     }
     return;
   }
@@ -310,6 +314,51 @@ void NRF24Screen::onUpdate() {
     return;
   }
 
+  if (_state == STATE_RF_TEST_TX) {
+    if (Uni.Nav->wasPressed()) {
+      auto dir = Uni.Nav->readDirection();
+      if (dir == INavigation::DIR_BACK) {
+        auto* r = _nrf.radio();
+        r->stopConstCarrier();
+        r->powerDown();
+        _radioEnd();
+        _showMenu();
+        return;
+      }
+      if (dir == INavigation::DIR_RIGHT) {
+        _rfTestCh  = (_rfTestCh >= kRfTestMaxCh) ? 0 : _rfTestCh + 1;
+        _nrf.radio()->setChannel(_rfTestCh);
+        _chromeDrawn = false;
+      } else if (dir == INavigation::DIR_LEFT) {
+        _rfTestCh  = (_rfTestCh == 0) ? kRfTestMaxCh : _rfTestCh - 1;
+        _nrf.radio()->setChannel(_rfTestCh);
+        _chromeDrawn = false;
+      } else if (dir == INavigation::DIR_UP) {
+        if (_rfTestDwellMs < kRfTestDwellMax) _rfTestDwellMs += kRfTestDwellStep;
+        _chromeDrawn = false;
+      } else if (dir == INavigation::DIR_DOWN) {
+        if (_rfTestDwellMs > kRfTestDwellMin) _rfTestDwellMs -= kRfTestDwellStep;
+        _chromeDrawn = false;
+      } else if (dir == INavigation::DIR_PRESS) {
+        // Toggle auto channel sweep — manual LEFT/RIGHT still works while
+        // auto is on, it's just overwritten on the next timer tick.
+        _rfTestAuto    = !_rfTestAuto;
+        _rfTestLastHop = millis();
+        _chromeDrawn   = false;
+      }
+      render();
+    }
+
+    if (_rfTestAuto && (millis() - _rfTestLastHop >= _rfTestDwellMs)) {
+      _rfTestLastHop = millis();
+      _rfTestCh = (_rfTestCh >= kRfTestMaxCh) ? 0 : _rfTestCh + 1;
+      _nrf.radio()->setChannel(_rfTestCh);
+      _chromeDrawn = false;
+      render();
+    }
+    return;
+  }
+
   if (_state == STATE_MJ_SCAN) {
     if (Uni.Nav->wasPressed()) {
       auto dir = Uni.Nav->readDirection();
@@ -350,6 +399,7 @@ void NRF24Screen::onRender() {
   if (_state == STATE_SPECTRUM)       { _renderSpectrum();     return; }
   if (_state == STATE_JAMMER_RUNNING) { _renderJammerStatus(); return; }
   if (_state == STATE_MJ_SCAN)        { _renderMjScan();       return; }
+  if (_state == STATE_RF_TEST_TX)     { _renderRfTest();       return; }
   ListScreen::onRender();
 }
 
@@ -373,6 +423,12 @@ void NRF24Screen::onBack() {
       _showMenu();
       break;
     case STATE_MJ_SCAN:
+      _radioEnd();
+      _showMenu();
+      break;
+    case STATE_RF_TEST_TX:
+      _nrf.radio()->stopConstCarrier();
+      _nrf.radio()->powerDown();
       _radioEnd();
       _showMenu();
       break;
@@ -577,6 +633,76 @@ void NRF24Screen::_renderJammerStatus() {
     lcd.drawString("[Lt/Rt] Mode  [Press] Hop", bx + bw / 2, footerY + 7, 1);
     _chromeDrawn = true;
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// ═══════════════ RF TEST TX ════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+//
+// Unmodulated continuous-wave carrier for bench use — point a VSWR meter /
+// spectrum analyzer / power meter at the antenna port and read it per
+// channel. Not a payload path: AutoAck/CRC/pipes are irrelevant here, only
+// PA level + channel matter. CE stays high and CONT_WAVE stays set across
+// setChannel() calls (same behavior the Jammer mode above already relies
+// on) — PLL retunes in the channel's spec'd lock time, no need to restart
+// the carrier.
+//
+// Full RF24_PA_MAX into an antenna is real transmit power, not a dummy-load
+// toy — keep dwell short unless you're on a dummy load / shielded test
+// setup, and mind your local spectrum regs for unmodulated carrier on ISM.
+
+void NRF24Screen::_startRfTest() {
+  if (!_radioBegin()) {
+    ShowStatusAction::show("NRF24 not detected");
+    render();
+    return;
+  }
+  auto* r = _nrf.radio();
+
+  r->setPALevel(RF24_PA_MAX);
+  _rfTestCh = 0;
+  r->startConstCarrier(RF24_PA_MAX, _rfTestCh);
+
+  _rfTestAuto    = false;
+  _rfTestDwellMs = 500;
+  _rfTestLastHop = millis();
+  _chromeDrawn   = false;
+  _state = STATE_RF_TEST_TX;
+  snprintf(_titleBuf, sizeof(_titleBuf), "RF Test TX");
+  render();
+}
+
+void NRF24Screen::_renderRfTest() {
+  auto& lcd = Uni.Lcd;
+  int bx = bodyX(), by = bodyY(), bw = bodyW(), bh = bodyH();
+  static constexpr int FOOTER_H = 20;
+  const int contentH = bh - FOOTER_H - 1;
+
+  lcd.fillRect(bx, by, bw, bh, TFT_BLACK);
+  lcd.setTextSize(1);
+  lcd.setTextDatum(TL_DATUM);
+
+  lcd.setTextColor(TFT_RED, TFT_BLACK);
+  lcd.drawString("CARRIER TX", bx + 4, by + 4, 1);
+
+  char line[32];
+  lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
+  snprintf(line, sizeof(line), "CH   : %3u  (%u MHz)", _rfTestCh, (unsigned)(2400 + _rfTestCh));
+  lcd.drawString(line, bx + 4, by + 4 + contentH / 4, 1);
+
+  lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  snprintf(line, sizeof(line), "SWEEP: %s", _rfTestAuto ? "AUTO" : "MANUAL");
+  lcd.drawString(line, bx + 4, by + 4 + contentH / 4 * 2, 1);
+
+  snprintf(line, sizeof(line), "DWELL: %u ms", _rfTestDwellMs);
+  lcd.drawString(line, bx + 4, by + 4 + contentH / 4 * 3, 1);
+
+  const int footerY = by + bh - FOOTER_H;
+  lcd.drawFastHLine(bx, footerY - 1, bw, TFT_DARKGREY);
+  lcd.setTextDatum(MC_DATUM);
+  lcd.drawString("[Lt/Rt] Ch  [Up/Dn] Dwell", bx + bw / 2, footerY + 6, 1);
+  lcd.drawString("[Press] Auto  [Back] Stop", bx + bw / 2, footerY + 15, 1);
+  lcd.setTextDatum(TL_DATUM);
 }
 
 // ══════════════════════════════════════════════════════════════

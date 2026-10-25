@@ -28,6 +28,7 @@ private:
     STATE_SPECTRUM,
     STATE_JAMMER_RUNNING,
     STATE_MJ_SCAN,
+    STATE_RF_TEST_TX,
   } _state = STATE_MENU;
 
   NRF24Util _nrf;
@@ -38,7 +39,17 @@ private:
   uint8_t _menuReturnIndex = 0;
 
   // ─── Main menu ──────────────────────────────────────────────────
-  ListItem _mainItems[3] = {{"Spectrum"}, {"Jammer"}, {"MouseJack"}};
+  ListItem _mainItems[4] = {{"Spectrum"}, {"Jammer"}, {"MouseJack"}, {"RF Test TX"}};
+
+  // ─── RF Test TX (continuous carrier — antenna/SWR bench check) ───
+  static constexpr uint16_t kRfTestMaxCh     = 125;  // 0-125 -> 2400-2525 MHz
+  static constexpr uint16_t kRfTestDwellMin  = 100;
+  static constexpr uint16_t kRfTestDwellMax  = 5000;
+  static constexpr uint16_t kRfTestDwellStep = 100;
+  uint8_t  _rfTestCh      = 0;
+  bool     _rfTestAuto    = false;
+  uint16_t _rfTestDwellMs = 500;
+  uint32_t _rfTestLastHop = 0;
 
   // ─── Spectrum ────────────────────────────────────────────────────
   static constexpr int kSpecCh         = 126;
@@ -89,6 +100,10 @@ private:
   void _startJammer();
   void _jamStep();
   void _renderJammerStatus();
+
+  // RF Test TX
+  void _startRfTest();
+  void _renderRfTest();
 
   // MouseJack — scanning
   void _setupMjScan();
