@@ -18,6 +18,9 @@ extern "C" {
 #include "utils/uart/BleFileManager.h"
 
 #include "screens/CharacterScreen.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/LvglShell.h"
+#endif
 #ifdef DEVICE_HAS_TOUCH_NAV
 #include "screens/setting/TouchGuideScreen.h"
 #endif
@@ -235,7 +238,11 @@ void setup() {
     Screen.setScreen(new TouchGuideScreen(false));
   else
 #endif
+#ifdef USE_LVGL_SHELL
+  Screen.setScreen(new LvglShellScreen());
+#else
   Screen.setScreen(new CharacterScreen());
+#endif
 }
 
 void loop() {
