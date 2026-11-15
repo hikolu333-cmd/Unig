@@ -4,6 +4,7 @@
 #include "utils/HackerHead.h"     // hacker head art + hackerGetRank / RankInfo
 #include "utils/CatHead.h"        // cat head art (theme-coloured)
 #include "utils/RobotHead.h"      // robot head art (theme-coloured)
+#include "utils/BoykisserHead.h"  // boykisser photo mascot (user's own picture)
 
 // ── Mascot ──────────────────────────────────────────────────────────────────
 // The single place that knows about the selectable head art. Screens ask for
@@ -51,6 +52,11 @@ private:
   static void _drawRobot(Sprite& dc, int ox, int oy, int ps, bool blink, int rank) {
     robotDrawHead(dc, ox, oy, ps, blink, Config.getThemeColor(), _accent(rank));
   }
+  // Photo mascot: the art carries its own colours — theme/rank don't apply.
+  static void _drawBoykisser(Sprite& dc, int ox, int oy, int ps, bool blink, int rank) {
+    (void)rank;
+    boykisserDrawHead(dc, ox, oy, ps, blink);
+  }
 
   // First row is the default (matches APP_CONFIG_MASCOT_DEFAULT = "hacker").
   static const Mascot* _all(uint8_t& n) {
@@ -58,6 +64,7 @@ private:
       { "hacker", "Hacker", 12,      14,      &_drawHacker },
       { "cat",    "Cat",    CAT_W,   CAT_H,   &_drawCat    },
       { "robot",  "Robot",  ROBOT_W, ROBOT_H, &_drawRobot  },
+      { "boykisser", "Boykisser", BK_W, BK_H, &_drawBoykisser },
     };
     n = (uint8_t)(sizeof(table) / sizeof(table[0]));
     return table;

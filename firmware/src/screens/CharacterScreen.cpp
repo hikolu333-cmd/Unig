@@ -149,6 +149,9 @@ constexpr const char* kWords[] = {
   // Misc / system
   "LittleFS OK",    "SD MOUNTED",     "I2C: 0x68",
   "QR LOADED",      "OTA READY",      ">_HACKING",
+  // Mascot chatter (boykisser flavor)
+  "I LIKE BOYS",    "KISS ME :3",     "NYA~",
+  "BOYKISSER!",     "SILLY CAT :3",
 };
 constexpr int kWordCount = (int)(sizeof(kWords) / sizeof(kWords[0]));
 
