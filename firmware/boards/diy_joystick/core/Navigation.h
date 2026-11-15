@@ -24,6 +24,12 @@ class NavigationImpl : public INavigation
 public:
   void begin() override {
     pinMode(JOY_SW_PIN, INPUT_PULLUP);
+
+#ifdef JOYSTICK_NOT_WIRED
+    // Stick unplanned for now: floating VRx/VRy would produce random
+    // directions and wake the display from power-save. Freeze all input.
+    return;
+#else
     analogReadResolution(12);
 
     // Average a batch of readings at rest to find each axis' center. Run
@@ -39,9 +45,14 @@ public:
     }
     _centerX = sumX / CAL_SAMPLES;
     _centerY = sumY / CAL_SAMPLES;
+#endif
   }
 
   void update() override {
+#ifdef JOYSTICK_NOT_WIRED
+    updateState(DIR_NONE);
+    return;
+#else
     uint32_t now = millis();
 
     // ── SW button: short press = PRESS, hold = BACK ─────────────────────
@@ -75,6 +86,7 @@ public:
     if (dx >  DEADZONE)      { updateState(DIR_RIGHT); return; }
 
     updateState(DIR_NONE);
+#endif
   }
 
 private:

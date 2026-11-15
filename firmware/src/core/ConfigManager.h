@@ -11,7 +11,13 @@
 #define APP_CONFIG_DEVICE_NAME                  "device_name"
 #define APP_CONFIG_DEVICE_NAME_DEFAULT          "UniGeek"
 #define APP_CONFIG_ENABLE_POWER_SAVING          "enable_power_saving"
+#ifdef DEVICE_DIY_JOYSTICK
+// diy_joystick: input is frozen while the stick is unwired — keep the screen
+// on instead of sleeping after 10 s with no way to wake it.
+#define APP_CONFIG_ENABLE_POWER_SAVING_DEFAULT  "0"
+#else
 #define APP_CONFIG_ENABLE_POWER_SAVING_DEFAULT  "1"
+#endif
 #define APP_CONFIG_ENABLE_POWER_OFF             "enable_power_off"
 #define APP_CONFIG_ENABLE_POWER_OFF_DEFAULT     "1"
 #define APP_CONFIG_INTERVAL_DISPLAY_OFF         "interval_display_off"

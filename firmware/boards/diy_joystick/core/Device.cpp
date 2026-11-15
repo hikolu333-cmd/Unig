@@ -15,7 +15,37 @@ static DisplayImpl    display;
 static NavigationImpl navigation;
 static PowerImpl      power;
 
-void Device::boardHook() {}
+//
+// PC Remote — control the device from a PC over the USB CDC serial link
+// while the physical joystick is unwired. Single-character commands:
+//   w/W/UP    → DIR_UP      s/S/DOWN → DIR_DOWN
+//   a/A/LEFT  → DIR_LEFT    d/D/RIGHT→ DIR_RIGHT
+//   e/Enter/Space → DIR_PRESS   b/B/Backspace → DIR_BACK
+//   h/H       → long PRESS (hold, auto-released by serviceInject)
+// Nothing else is consumed, so the line stays free for logs/other traffic.
+//
+void Device::boardHook() {
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+
+    INavigation::Direction dir = INavigation::DIR_NONE;
+    bool hold = false;
+    switch (c) {
+      case 'w': case 'W': case 'U': dir = INavigation::DIR_UP;    break;
+      case 's': case 'S': case 'D': dir = INavigation::DIR_DOWN;  break;
+      case 'a': case 'A': case 'L': dir = INavigation::DIR_LEFT;  break;
+      case 'd': case 'R':           dir = INavigation::DIR_RIGHT; break;
+      case 'e': case '\r': case '\n': dir = INavigation::DIR_PRESS; break;
+      case 'b': case 'B': case 0x7F: dir = INavigation::DIR_BACK; break;
+      case 'h': case 'H': dir = INavigation::DIR_PRESS; hold = true; break;
+      default: continue;  // logs/unknown bytes — ignore
+    }
+
+    if (hold) Nav->injectHold(dir);
+    else      Nav->inject(dir);
+    lastActiveMs = millis();
+  }
+}
 
 Device* Device::createInstance() {
   pinMode(LCD_BL, OUTPUT);

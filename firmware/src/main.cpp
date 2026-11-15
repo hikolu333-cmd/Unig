@@ -203,13 +203,18 @@ void setup() {
   // Default 256-byte RX FIFO for now — only grown below if the Serial File
   // Manager is enabled, since that's the only consumer that needs it.
   Serial.begin(115200);
+  delay(200);
+  Serial.println("[BOOT] setup() enter");
 
   if (psramFound()) {
     mbedtls_platform_set_calloc_free(_mbedtlsPsramCalloc, _mbedtlsPsramFree);
   }
 
+  Serial.println("[BOOT] before Uni.begin()");
   Uni.begin();
+  Serial.println("[BOOT] after Uni.begin() (TFT inited)");
   Uni.initStorage();
+  Serial.println("[BOOT] storage ok");
   Config.load(Uni.Storage);   // load early so optional services can be gated
 
   // USB Remote (HID → USB Remote) and BLE Remote Device are both live toggles
@@ -219,6 +224,7 @@ void setup() {
   RtcManager::syncSystemFromRtc();
 #endif
   _bootSplash();
+  Serial.println("[BOOT] splash done, entering CharacterScreen");
 #ifdef DEVICE_CYD
   if (Config.get(APP_CONFIG_TOUCH_CALIBRATED, APP_CONFIG_TOUCH_CALIBRATED_DEFAULT) == "0")
     Screen.setScreen(new CYDTouchCalScreen());
