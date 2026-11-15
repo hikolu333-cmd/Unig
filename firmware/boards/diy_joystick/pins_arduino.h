@@ -85,7 +85,7 @@ static const uint8_t SCL = GROVE_SCL;
 #define TFT_DEFAULT_ORIENTATION  1
 #define TOUCH_CS    -1           // touch not wired/used yet — joystick is primary nav
 #define SMOOTH_FONT 1
-#define SPI_FREQUENCY       4000000    // 4 МГц: перемычки; поднять после проверки
+#define SPI_FREQUENCY       16000000   // 16 МГц: пробная частота для LVGL (4 МГц давало видимую протяжку кадров; 27 МГц ранее давало помехи на перемычках). При полосах/шуме — вернуть 4000000.
 #define SPI_READ_FREQUENCY  2000000
 
 // ─── App feature flags ─────────────────────────────────────

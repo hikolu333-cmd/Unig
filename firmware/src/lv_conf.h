@@ -18,7 +18,7 @@
 /* Memory: LVGL's own TLSF pool in .bss (board has no PSRAM; 48K is plenty for
    the shell UI). The draw buffer is allocated separately (see LvglShell.cpp). */
 #define LV_MEM_CUSTOM        0
-#define LV_MEM_SIZE          (48U * 1024U)
+#define LV_MEM_SIZE          (64U * 1024U)
 
 /* Tick: drive LVGL time straight from Arduino millis() — no lv_tick_inc()
    needed in the loop. */
@@ -32,6 +32,14 @@
 #define LV_FONT_MONTSERRAT_16 1
 #define LV_FONT_MONTSERRAT_20 1
 #define LV_FONT_DEFAULT      &lv_font_montserrat_16
+
+/* Theme: kill the animated state transitions (default 80 ms + 70 ms delay on
+   focus/press changes). At the 4 MHz SPI bus each animation frame is a full
+   row repaint (~50 ms), so a colour morph reads as visible stepping/flicker
+   instead of a smooth fade. Instant state changes are also fewer bytes on
+   the wire. Same for LV_THEME_DEFAULT_GROW (press "grow" scale animation). */
+#define LV_THEME_DEFAULT_GROW             0
+#define LV_THEME_DEFAULT_TRANSITION_TIME   0
 
 /* Layout: flex powers the menu grid. */
 #define LV_USE_FLEX          1

@@ -1,6 +1,9 @@
 #pragma once
 #include "BaseScreen.h"
 #include "core/ScreenManager.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/LvglUi.h"
+#endif
 
 class ListScreen : public BaseScreen
 {
@@ -18,6 +21,34 @@ public:
     bool        hasRssi;            // when true, label is tinted by RSSI strength
     bool        sublabelMarquee;    // selected row scrolls an overlong right-hand sublabel
   };
+
+#ifdef USE_LVGL_SHELL
+public:
+  ~ListScreen() override { _lvTeardown(); }
+
+  // LVGL mode: no legacy fillScreen(TFT_BLACK) here — the page root is an
+  // opaque full-screen object, so LVGL paints the new page straight over the
+  // previous one. The black wipe added a jarring full-black frame between
+  // pages on the slow SPI bus.
+  void init() override { onInit(); render(); }
+
+  // LVGL mode: the page is a widget tree — no per-loop sprite/chrome
+  // drawing. update() only feeds events + pumps LVGL timers; render()
+  // (called on setItems / display wake) syncs the tree and paints.
+  void render() override {
+    if (Uni.lcdOff) return;
+    onRender();
+  }
+  void update() override {
+    onUpdate();
+    if (!Uni.lcdOff && _lvRoot) lv_timer_handler();
+  }
+  // Returning from a legacy (non-LVGL) leaf screen: the panel was drawn over
+  // directly — invalidate our page so LVGL repaints it.
+  void onRestore() override {
+    if (_lvRoot) lv_obj_invalidate(_lvRoot);
+  }
+#endif
 
   template <size_t N>
   void setItems(ListItem (&arr)[N])
@@ -77,26 +108,38 @@ public:
       if (dir == INavigation::DIR_UP)
       {
         _selectedIndex = (_selectedIndex == 0) ? eff - 1 : _selectedIndex - 1;
+#ifdef USE_LVGL_SHELL
+        _lvApplyFocus();
+#else
         _scrollIfNeeded();
         _resetMarquee();
         onRender();
+#endif
         if (Uni.Speaker) Uni.Speaker->beep();
       }
       else if (dir == INavigation::DIR_DOWN)
       {
         _selectedIndex = (_selectedIndex >= eff - 1) ? 0 : _selectedIndex + 1;
+#ifdef USE_LVGL_SHELL
+        _lvApplyFocus();
+#else
         _scrollIfNeeded();
         _resetMarquee();
         onRender();
+#endif
         if (Uni.Speaker) Uni.Speaker->beep();
       }
       else if (dir == INavigation::DIR_LEFT)
       {
         uint8_t page = bodyH() / ITEM_H;
         _selectedIndex = (_selectedIndex >= page) ? _selectedIndex - page : 0;
+#ifdef USE_LVGL_SHELL
+        _lvApplyFocus();
+#else
         _scrollIfNeeded();
         _resetMarquee();
         onRender();
+#endif
         if (Uni.Speaker) Uni.Speaker->beep();
       }
       else if (dir == INavigation::DIR_RIGHT)
@@ -104,9 +147,13 @@ public:
         uint8_t page = bodyH() / ITEM_H;
         uint8_t last = eff - 1;
         _selectedIndex = (_selectedIndex + page <= last) ? _selectedIndex + page : last;
+#ifdef USE_LVGL_SHELL
+        _lvApplyFocus();
+#else
         _scrollIfNeeded();
         _resetMarquee();
         onRender();
+#endif
         if (Uni.Speaker) Uni.Speaker->beep();
       }
       else if (dir == INavigation::DIR_PRESS)
@@ -116,11 +163,16 @@ public:
       return;
     }
 
+#ifndef USE_LVGL_SHELL
     _updateMarquee();
+#endif
   }
 
   void onRender() override
   {
+#ifdef USE_LVGL_SHELL
+    _lvRender();
+#else
     uint8_t eff          = _effectiveCount();
     uint8_t fullyVisible = bodyH() / ITEM_H;
     int16_t leftover     = (int16_t)bodyH() - fullyVisible * (int16_t)ITEM_H;
@@ -290,11 +342,11 @@ public:
         lcd.fillRect(sbX, thumbY, SB_W, thumbH, Config.getThemeColor());
       }
     }
+#endif // !USE_LVGL_SHELL
   }
 
   virtual void onItemSelected(uint8_t index) = 0;
   virtual void onBack() { Screen.goBack(); }
-
 protected:
   uint8_t _selectedIndex = 0;
 
@@ -420,8 +472,127 @@ private:
     return _count;
   }
 
+#ifdef USE_LVGL_SHELL
+  // ── LVGL page: title header + scrolling flex-column of row buttons ──────
+private:
+  lv_obj_t* _lvRoot        = nullptr;
+  lv_obj_t* _lvList        = nullptr;
+  int       _lvPrevSel     = -1;
+  bool      _lvNeedRebuild = false;
+
+  static lv_color_t _c565(uint16_t c) {
+    return lv_color_make((uint8_t)(((c >> 11) & 0x1F) * 255 / 31),
+                         (uint8_t)(((c >> 5) & 0x3F) * 255 / 63),
+                         (uint8_t)((c & 0x1F) * 255 / 31));
+  }
+
+  void _lvTeardown() {
+    if (_lvRoot) {
+      lv_obj_del(_lvRoot);      // invalidates the covered area → repaint below
+      _lvRoot = nullptr;
+      _lvList = nullptr;
+    }
+    _lvPrevSel     = -1;
+    _lvNeedRebuild = true;
+  }
+
+  void _lvBuild() {
+    LvglUi::ensure();
+    _lvRoot = LvglUi::pageRoot(title());
+    _lvList = LvglUi::makeList(_lvRoot);
+    _lvNeedRebuild = true;
+  }
+
+  void _lvRender() {
+    if (!_lvRoot) _lvBuild();
+    if (_lvNeedRebuild) { _lvPopulateRows(); _lvNeedRebuild = false; }
+    else _lvRefreshRows();
+    _lvApplyFocus();
+    lv_timer_handler();
+  }
+
+  void _lvPopulateRows() {
+    lv_obj_clean(_lvList);
+    uint8_t eff = _effectiveCount();
+    for (uint8_t i = 0; i < eff; i++) {
+      const ListItem& it = _items[i];
+      const bool stacked = _stackedSublabels && it.sublabel;
+      lv_obj_t* row = lv_btn_create(_lvList);
+      lv_obj_set_size(row, lv_pct(100), stacked ? 44 : 34);
+      LvglUi::styleRow(row);
+      lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+      lv_obj_t* lbl = lv_label_create(row);
+      lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+      lv_obj_set_width(lbl, lv_pct(stacked ? 92 : (it.sublabel ? 58 : 92)));
+      lv_obj_set_pos(lbl, 6, stacked ? 2 : 8);
+      lv_label_set_text(lbl, it.label ? it.label : "");
+      if (it.hasRssi)
+        lv_obj_set_style_text_color(lbl, _c565(_rssiColor(it.rssi)), 0);
+
+      if (it.sublabel) {
+        lv_obj_t* sub = lv_label_create(row);
+        lv_obj_set_style_text_font(sub, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(sub, lv_color_hex(0x909090), 0);
+        lv_label_set_long_mode(sub, LV_LABEL_LONG_DOT);
+        if (stacked) {
+          lv_obj_set_pos(sub, 6, 25);
+          lv_obj_set_width(sub, lv_pct(92));
+        } else {
+          lv_obj_align(sub, LV_ALIGN_RIGHT_MID, -6, 0);
+          lv_obj_set_width(sub, lv_pct(38));
+        }
+        lv_label_set_text(sub, it.sublabel);
+      }
+    }
+    _lvPrevSel = -1;
+    _lvApplyFocus();
+  }
+
+  // In-place item edits (sublabels toggled by a screen, item text changes):
+  // update existing rows' texts without rebuilding the tree.
+  void _lvRefreshRows() {
+    if (!_lvList) return;
+    uint8_t eff = _effectiveCount();
+    for (uint8_t i = 0; i < eff; i++) {
+      lv_obj_t* row = lv_obj_get_child(_lvList, i);
+      if (!row) break;
+      const ListItem& it = _items[i];
+      lv_obj_t* lbl = lv_obj_get_child(row, 0);
+      if (lbl && it.label) lv_label_set_text(lbl, it.label);
+      if (it.sublabel) {
+        lv_obj_t* sub = lv_obj_get_child(row, 1);
+        if (sub) lv_label_set_text(sub, it.sublabel);
+      }
+    }
+  }
+
+  void _lvApplyFocus() {
+    if (!_lvList) return;
+    uint8_t eff = _effectiveCount();
+    if (eff == 0) return;
+    if (_selectedIndex >= eff) _selectedIndex = eff - 1;
+    if (_lvPrevSel == (int)_selectedIndex) return;
+    if (_lvPrevSel >= 0 && _lvPrevSel < (int)eff && _lvPrevSel != (int)_selectedIndex) {
+      lv_obj_t* prev = lv_obj_get_child(_lvList, _lvPrevSel);
+      if (prev) lv_obj_clear_state(prev, LV_STATE_FOCUSED);
+    }
+    lv_obj_t* cur = lv_obj_get_child(_lvList, _selectedIndex);
+    if (cur) {
+      lv_obj_add_state(cur, LV_STATE_FOCUSED);
+      // ANIM_OFF: animated scroll repaints the whole list per frame — at the
+      // 4 MHz SPI bus that reads as flicker.
+      lv_obj_scroll_to_view(cur, LV_ANIM_OFF);
+    }
+    _lvPrevSel = _selectedIndex;
+  }
+#endif // USE_LVGL_SHELL
+
   void _scrollIfNeeded()
   {
+#ifdef USE_LVGL_SHELL
+    _lvNeedRebuild = true;
+#endif
     uint8_t visible = bodyH() / ITEM_H;
     uint8_t eff     = _effectiveCount();
     if (_selectedIndex < _scrollOffset) {

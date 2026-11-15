@@ -17,6 +17,7 @@
 #include "utils/FirmwareInfo.h"
 #include "utils/Mascot.h"           // Mascot registry + hackerGetRank
 #include "ui/lvgl/BoykisserImg.h"
+#include "ui/lvgl/LvglUi.h"         // shared LVGL session (driver/theme/row styles)
 
 // Legacy screens launched from the LVGL menu — same set as MainMenuScreen.
 #include "screens/wifi/WifiMenuScreen.h"
@@ -71,8 +72,6 @@ lv_obj_t* s_menuBtns[8] = {};
 int      s_menuSel      = 0;
 int      s_menuCount    = 0;
 
-lv_style_t s_styleBtn;
-lv_style_t s_styleBtnFocus;
 lv_style_t s_styleBubble;
 
 // bubble state machine (typewriter, like the old CharacterScreen one)
@@ -103,14 +102,6 @@ lv_color_t _c565(uint16_t c) {
 }
 lv_color_t _accent() { return _c565(Config.getThemeColor()); }
 
-// ── LVGL display driver (flush into TFT_eSPI; also feeds the web mirror) ─────
-void _flush(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* color_p) {
-  const int32_t w = area->x2 - area->x1 + 1;
-  const int32_t h = area->y2 - area->y1 + 1;
-  Uni.Lcd.pushImage(area->x1, area->y1, w, h, (const uint16_t*)color_p);
-  lv_disp_flush_ready(drv);
-}
-
 // ── periodic UI work ──────────────────────────────────────────────────────────
 void _refreshInfo() {
   int      exp = Achievement.getExp();
@@ -136,13 +127,15 @@ void _refreshInfo() {
 
   snprintf(buf, sizeof(buf), "EXP %d", exp);
   lv_label_set_text(s_expLbl, buf);
-  lv_bar_set_value(s_expBar, _clampPct(exp * 100 / 4500), LV_ANIM_ON);
+  // LV_ANIM_OFF: bar animations repaint the bar repeatedly; at 4 MHz that
+  // reads as stepped flicker, and the bars only move 1-2% at a time anyway.
+  lv_bar_set_value(s_expBar, _clampPct(exp * 100 / 4500), LV_ANIM_OFF);
 
-  lv_bar_set_value(s_hpBar, hp, LV_ANIM_ON);
+  lv_bar_set_value(s_hpBar, hp, LV_ANIM_OFF);
   snprintf(buf, sizeof(buf), "HP %d%%%s", hp, chg ? "+" : "");
   lv_label_set_text(s_hpLbl, buf);
 
-  lv_bar_set_value(s_brBar, brain, LV_ANIM_ON);
+  lv_bar_set_value(s_brBar, brain, LV_ANIM_OFF);
   snprintf(buf, sizeof(buf), "BR %d%%", brain);
   lv_label_set_text(s_brLbl, buf);
 }
@@ -180,11 +173,6 @@ void _bubbleTimer(lv_timer_t*) {
 }
 
 // ── menu ─────────────────────────────────────────────────────────────────────
-void _styleBtns(lv_obj_t* b) {
-  lv_obj_add_style(b, &s_styleBtn, 0);
-  lv_obj_add_style(b, &s_styleBtnFocus, LV_STATE_FOCUSED);
-}
-
 void _menuFocus(int idx) {
   lv_obj_clear_state(s_menuBtns[s_menuSel], LV_STATE_FOCUSED);
   s_menuSel = idx;
@@ -201,31 +189,12 @@ void _menuFocus(int idx) {
 void LvglShellScreen::_ensureUi() {
   if (s_lvInit) return;
 
-  lv_init();
-
-  static lv_disp_draw_buf_t drawBuf;
+  // Shared LVGL session (lv_init + display driver + theme + row styles) —
+  // also used by every ListScreen page. This is the first call in practice,
+  // so the diagnostic line lands in the boot log once.
+  LvglUi::ensure();
   const int W = Uni.Lcd.width();
   const int H = Uni.Lcd.height();
-  const int bufH = 40;
-  static lv_color_t* bufPx = (lv_color_t*)malloc(W * bufH * sizeof(lv_color_t));
-  Serial.printf("[LVGL] color=%d bytes, swap=%d, buf=%d px (%u B), heap=%u\n",
-                (int)sizeof(lv_color_t), (int)LV_COLOR_16_SWAP, W * bufH,
-                (unsigned)(W * bufH * sizeof(lv_color_t)),
-                (unsigned)ESP.getFreeHeap());
-  lv_disp_draw_buf_init(&drawBuf, bufPx, nullptr, W * bufH);
-
-  static lv_disp_drv_t dispDrv;
-  lv_disp_drv_init(&dispDrv);
-  dispDrv.hor_res  = W;
-  dispDrv.ver_res = H;
-  dispDrv.flush_cb = _flush;
-  dispDrv.draw_buf = &drawBuf;
-  lv_disp_t* disp = lv_disp_drv_register(&dispDrv);
-
-  lv_theme_t* th = lv_theme_default_init(disp, _accent(),
-                                         lv_palette_darken(LV_PALETTE_GREY, 4),
-                                         true, LV_FONT_DEFAULT);
-  lv_disp_set_theme(disp, th);
 
   // mascot image descriptors (runtime fill: bitfield structs)
   s_imgOpen.header.always_zero = 0;
@@ -238,21 +207,8 @@ void LvglShellScreen::_ensureUi() {
   s_imgClosed.data     = (const uint8_t*)BK_LV_CLOSED;
 
   // ── styles ──────────────────────────────────────────────────────────────
-  lv_style_init(&s_styleBtn);
-  lv_style_set_bg_color(&s_styleBtn, lv_color_hex(0x101010));
-  lv_style_set_bg_opa(&s_styleBtn, LV_OPA_COVER);
-  lv_style_set_radius(&s_styleBtn, 8);
-  lv_style_set_border_color(&s_styleBtn, lv_color_hex(0x3A3A3A));
-  lv_style_set_border_width(&s_styleBtn, 1);
-  lv_style_set_text_color(&s_styleBtn, lv_color_hex(0xC8C8C8));
-
-  lv_style_init(&s_styleBtnFocus);
-  lv_style_set_bg_color(&s_styleBtnFocus, _accent());
-  lv_style_set_bg_opa(&s_styleBtnFocus, LV_OPA_COVER);
-  lv_style_set_border_color(&s_styleBtnFocus, lv_color_white());
-  lv_style_set_border_width(&s_styleBtnFocus, 2);
-  lv_style_set_text_color(&s_styleBtnFocus, lv_color_black());
-
+  // Rows/buttons use the shared LvglUi::styleRow(); only the speech bubble
+  // look is shell-specific.
   lv_style_init(&s_styleBubble);
   lv_style_set_bg_color(&s_styleBubble, lv_color_hex(0x18181A));
   lv_style_set_bg_opa(&s_styleBubble, LV_OPA_COVER);
@@ -427,7 +383,7 @@ void LvglShellScreen::_ensureUi() {
   for (int i = 0; i < s_menuCount; i++) {
     lv_obj_t* b = lv_btn_create(s_menuList);
     lv_obj_set_size(b, btnW, 40);
-    _styleBtns(b);
+    LvglUi::styleRow(b);
     lv_obj_set_style_text_font(b, &lv_font_montserrat_20, 0);
     lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t* l = lv_label_create(b);
