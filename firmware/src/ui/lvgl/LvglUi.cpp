@@ -48,10 +48,6 @@ void ensure() {
   const int bufH = 40;
   static lv_disp_draw_buf_t drawBuf;
   static lv_color_t* bufPx = (lv_color_t*)malloc(W * bufH * sizeof(lv_color_t));
-  Serial.printf("[LVGL] color=%d bytes, swap=%d, buf=%d px (%u B), heap=%u\n",
-                (int)sizeof(lv_color_t), (int)LV_COLOR_16_SWAP, W * bufH,
-                (unsigned)(W * bufH * sizeof(lv_color_t)),
-                (unsigned)ESP.getFreeHeap());
   lv_disp_draw_buf_init(&drawBuf, bufPx, nullptr, W * bufH);
 
   static lv_disp_drv_t dispDrv;

@@ -206,18 +206,32 @@ void setup() {
   // Default 256-byte RX FIFO for now — only grown below if the Serial File
   // Manager is enabled, since that's the only consumer that needs it.
   Serial.begin(115200);
+#if ARDUINO_USB_CDC_ON_BOOT
+  // UART0 (GPIO43/44, bridged by the CH9102 on the micro-USB port): a console
+  // channel that survives WiFi radio power-up, unlike the native USB console.
+  // Also carries PC Remote keys — see boards/diy_joystick/core/Device.cpp.
+  Serial0.begin(115200);
+#endif
   delay(200);
-  Serial.println("[BOOT] setup() enter");
 
   if (psramFound()) {
     mbedtls_platform_set_calloc_free(_mbedtlsPsramCalloc, _mbedtlsPsramFree);
   }
 
-  Serial.println("[BOOT] before Uni.begin()");
+#ifdef DEVICE_DIY_JOYSTICK
+  {
+    // One-shot radio warm-up (board-specific: this devkit's supply collapses
+    // under the WiFi RF-calibration spike, so the radio must come up once at
+    // minimal load and then never power down — see boards/diy_joystick/core/
+    // RadioKeeper.cpp).
+    extern void diyJoystickRadioWarmUp();
+    diyJoystickRadioWarmUp();
+  }
+#endif
   Uni.begin();
-  Serial.println("[BOOT] after Uni.begin() (TFT inited)");
+
   Uni.initStorage();
-  Serial.println("[BOOT] storage ok");
+
   Config.load(Uni.Storage);   // load early so optional services can be gated
 
   // USB Remote (HID → USB Remote) and BLE Remote Device are both live toggles
@@ -227,7 +241,7 @@ void setup() {
   RtcManager::syncSystemFromRtc();
 #endif
   _bootSplash();
-  Serial.println("[BOOT] splash done, entering CharacterScreen");
+
 #ifdef DEVICE_CYD
   if (Config.get(APP_CONFIG_TOUCH_CALIBRATED, APP_CONFIG_TOUCH_CALIBRATED_DEFAULT) == "0")
     Screen.setScreen(new CYDTouchCalScreen());
