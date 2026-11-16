@@ -207,9 +207,10 @@ void setup() {
   // Manager is enabled, since that's the only consumer that needs it.
   Serial.begin(115200);
 #if ARDUINO_USB_CDC_ON_BOOT
-  // UART0 (GPIO43/44, bridged by the CH9102 on the micro-USB port): a console
+  // UART0 (GPIO43/44, bridged by the CH343/CH9102 on the micro-USB port): a console
   // channel that survives WiFi radio power-up, unlike the native USB console.
-  // Also carries PC Remote keys — see boards/diy_joystick/core/Device.cpp.
+  // Carries RadioKeeper telemetry; the radio re-arm service key 'r' is
+  // accepted here — see boards/diy_joystick/core/Device.cpp.
   Serial0.begin(115200);
 #endif
   delay(200);
@@ -220,12 +221,12 @@ void setup() {
 
 #ifdef DEVICE_DIY_JOYSTICK
   {
-    // One-shot radio warm-up (board-specific: this devkit's supply collapses
-    // under the WiFi RF-calibration spike, so the radio must come up once at
-    // minimal load and then never power down — see boards/diy_joystick/core/
-    // RadioKeeper.cpp).
-    extern void diyJoystickRadioWarmUp();
-    diyJoystickRadioWarmUp();
+    // Radio state check (board-specific, no radio activity here — the radio
+    // is strictly on-demand): counts mid-start brownouts from the previous
+    // boot so weak-rail boards degrade gracefully instead of boot-looping.
+    // See boards/diy_joystick/core/RadioKeeper.cpp.
+    extern void diyJoystickRadioBootCheck();
+    diyJoystickRadioBootCheck();
   }
 #endif
   Uni.begin();

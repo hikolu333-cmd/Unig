@@ -1,25 +1,32 @@
 //
-// RadioKeeper — radio bring-up keeper for the diy_joystick board.
+// RadioKeeper — on-demand radio with weak-rail protection (diy_joystick).
 //
-// Budget ESP32-S3 devkit clones often have a 3V3 rail (weak LDO / missing
-// bulk capacitance) that collapses under the current spike of the modem
-// power-up inside esp_wifi_start(): the board browns out and reboots (reset
-// reason POWERON/BROWNOUT — a hardware signature, not a crash).
+// The radio powers up ONLY when a WiFi/BT feature actually needs it and
+// powers back down when the app releases it — no boot-time warm-up, no
+// keep-alive: idle boards stay cool. (The boot-time warm-up + "radio never
+// powers down" strategy was a workaround for one dead devkit and is retired;
+// see git history / release v1.9.x notes.)
 //
-// Strategy (all software, no hardware changes required):
-//  1. Warm the radio up ONCE per power cycle at boot, before the display
-//     and LVGL load the rail: CPU clocked down, panel dark, RF calibration
-//     downgraded to PHY_RF_CAL_NONE (the deep-sleep wake path) to dodge the
-//     PA calibration spike.
-//  2. Retry up to 5 times per power cycle: each failed attempt costs one
-//     ~4 s reboot, a success keeps the radio alive for the whole session.
-//  3. Keep the driver started forever: esp_wifi_stop/deinit are
-//     linker-wrapped to no-ops (see config.ini --wrap flags), so the app's
-//     WiFi.mode(WIFI_OFF) cycles never power the radio down again.
-//  4. If the rail still can't power the modem, fail gracefully: WiFi/BLE
-//     entry points refuse with an error instead of browning the board out.
-//  5. Telemetry goes to both consoles (native USB + UART0): the UART bridge
-//     survives radio power-up, the native USB console usually does not.
+// For budget ESP32-S3 devkit clones with a collapsing 3V3 rail (weak LDO /
+// missing bulk capacitance) the modem power-up spike inside esp_wifi_start()
+// browns the board out (reset reason POWERON/BROWNOUT — a hardware
+// signature). That protection is kept, as pure insurance, at zero cost for
+// healthy boards:
+//  1. Every esp_wifi_start() is wrapped: an NVS "attempting" flag is set
+//     before the real call, so a brownout mid-start is recognized by the
+//     NEXT boot (attempting + POWERON/BROWNOUT) and counted.
+//  2. After 5 counted failures per power cycle, starts are refused with
+//     ESP_ERR_WIFI_STATE — WiFi screens report an error instead of
+//     reboot-looping the board (graceful degradation).
+//  3. Once a weak rail is detected (any counted failure), the RF
+//     calibration inside PHY init is downgraded to PHY_RF_CAL_NONE (the
+//     deep-sleep wake path) to dodge the PA calibration spike. Healthy
+//     boards always get the full calibration for accurate TX.
+//  4. Telemetry goes to both consoles (native USB + UART0): the UART
+//     bridge survives radio power-up, the native USB console usually
+//     does not.
+//
+// Service key 'r' (either serial console) resets the weak-rail state for another try.
 //
 
 #pragma once
@@ -29,18 +36,23 @@
 class RadioKeeper
 {
 public:
-  // Bring the radio up with minimal load (call early in setup(), before the
-  // display initializes). Safe to call on every boot.
-  static void warmUp();
+  // Call once early in setup() (no radio activity, no heat): classifies the
+  // previous reset, counts mid-start brownouts, decides the gave-up state.
+  static void bootCheck();
 
-  // True once the driver has been started and is being kept alive.
-  static bool isUp() { return s_radioUp; }
-
-  // True when the warm-up gave up this power cycle (rail can't power the
-  // modem). WiFi calls then fail gracefully instead of browning out.
+  // True when starts are refused this power cycle (rail can't power the
+  // modem). WiFi entry points then fail gracefully instead of browning the
+  // board out.
   static bool gaveUp() { return s_gaveUp; }
 
+  // True once a weak rail has been detected (sticky; cleared by resetFails).
+  static bool railWeak() { return s_railWeak; }
+
+  // Service-key 'r': clear the failure counters and the sticky weak-rail
+  // flag — the next WiFi screen retries the radio from scratch.
+  static void resetFails();
+
 private:
-  static bool s_radioUp;
   static bool s_gaveUp;
+  static bool s_railWeak;
 };
