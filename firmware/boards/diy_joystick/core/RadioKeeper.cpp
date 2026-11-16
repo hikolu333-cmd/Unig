@@ -126,9 +126,11 @@ void RadioKeeper::warmUp()
   pinMode(TFT_CS, OUTPUT);
   digitalWrite(TFT_CS, HIGH);
 
-  // Minimal rail load: lowest CPU clock, display not initialized yet.
+  // Minimal rail load with the display not initialized yet. NOTE: 80 MHz is
+  // the floor — the WiFi driver hangs below it (task watchdog: IDLE0 starved
+  // by the busy wifi task, verified on a healthy N16R8 board).
   uint32_t cpu = getCpuFrequencyMhz();
-  setCpuFrequencyMhz(40);
+  setCpuFrequencyMhz(80);
 
   esp_netif_init();
   esp_event_loop_create_default();
