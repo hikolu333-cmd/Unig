@@ -1,6 +1,9 @@
 #pragma once
 
 #include "ui/templates/BaseScreen.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/SpriteCanvas.h"
+#endif
 
 class GameMemoryScreen : public BaseScreen
 {
@@ -102,4 +105,17 @@ private:
   void _renderFeedbackWrong();
   void _renderGameLoss();
   void _renderHighScores();
+
+#ifdef USE_LVGL_SHELL
+  // Full-body pixel game — bridged via canvas; origin shifts to (0,0).
+  SpriteCanvas _scene;
+  Sprite*      _spr = nullptr;
+  int _bx() { return 0; }
+  int _by() { return 0; }
+  Sprite* _lvSpr() { return _spr; }
+#else
+  int _bx() { return bodyX(); }
+  int _by() { return bodyY(); }
+  Sprite* _lvSpr();   // defined in the cpp: the panel
+#endif
 };

@@ -31,6 +31,10 @@ void GameNumberGuessScreen::onInit()
 
 // ── _initGame ────────────────────────────────────────────────────────────────
 
+#ifndef USE_LVGL_SHELL
+Sprite* GameNumberGuessScreen::_lvSpr() { return &Uni.Lcd; }
+#endif
+
 void GameNumberGuessScreen::_initGame()
 {
   randomSeed(millis());
@@ -359,6 +363,10 @@ void GameNumberGuessScreen::_insertScore(int g, uint32_t ms)
 
 void GameNumberGuessScreen::onRender()
 {
+#ifdef USE_LVGL_SHELL
+  if (!_scene.ensure(Uni.Lcd, bodyW(), bodyH())) return;
+  _spr = &_scene.sprite();
+#endif
   switch (_state) {
     case STATE_MENU:        _renderMenu();        break;
     case STATE_PLAY:        _renderPlay();        break;
@@ -366,16 +374,23 @@ void GameNumberGuessScreen::onRender()
     case STATE_LOSE:        _renderResult();      break;
     case STATE_HIGH_SCORES: _renderHighScores();  break;
   }
+#ifdef USE_LVGL_SHELL
+  _scene.flush();
+#endif
 }
 
 // ── _renderMenu ───────────────────────────────────────────────────────────────
 
 void GameNumberGuessScreen::_renderMenu()
 {
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // game renders into the canvas sprite
+#else
   auto& lcd = Uni.Lcd;
+#endif
   bool firstTime = (_prevState != STATE_MENU);
   if (firstTime) {
-    lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
+    lcd.fillRect(_bx(), _by(), bodyW(), bodyH(), TFT_BLACK);
     _prevState      = STATE_MENU;
     _lastMenuIdx    = -1;
     _lastDiff       = 0xFF;
@@ -399,14 +414,14 @@ void GameNumberGuessScreen::_renderMenu()
     bool diffChange = diffRow && (_lastDiff != _diff);
     if (!firstTime && sel == wasSel && !diffChange) continue;
 
-    Sprite sp(&Uni.Lcd);
+    Sprite sp(_lvSpr());
     sp.createSprite(bodyW(), lineH);
     sp.fillSprite(TFT_BLACK);
     sp.setTextSize(2);
     sp.setTextDatum(MC_DATUM);
     sp.setTextColor(sel ? Config.getThemeColor() : TFT_WHITE, TFT_BLACK);
     sp.drawString(items[i], cx, lineH / 2);
-    sp.pushSprite(bodyX(), bodyY() + startY + i * lineH);
+    sp.pushSprite(_bx(), _by() + startY + i * lineH);
     sp.deleteSprite();
   }
 
@@ -417,14 +432,14 @@ void GameNumberGuessScreen::_renderMenu()
     else
       snprintf(info, sizeof(info), "0-%d  unlimited", kDiffMaxVal[_diff]);
 
-    Sprite sp(&Uni.Lcd);
+    Sprite sp(_lvSpr());
     sp.createSprite(bodyW(), footH);
     sp.fillSprite(TFT_BLACK);
     sp.setTextSize(1);
     sp.setTextColor(TFT_DARKGREY, TFT_BLACK);
     sp.setTextDatum(BC_DATUM);
     sp.drawString(info, cx, footH - 1);
-    sp.pushSprite(bodyX(), bodyY() + bodyH() - footH);
+    sp.pushSprite(_bx(), _by() + bodyH() - footH);
     sp.deleteSprite();
   }
 
@@ -444,7 +459,7 @@ void GameNumberGuessScreen::_renderPlay()
 
   bool firstTime = (_prevState != STATE_PLAY);
   if (firstTime) {
-    Uni.Lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
+    _lvSpr()->fillRect(_bx(), _by(), bodyW(), bodyH(), TFT_BLACK);
     _prevState = STATE_PLAY;
   }
 
@@ -467,11 +482,11 @@ void GameNumberGuessScreen::_renderPlay()
   const int     midY     = statsH + (midAreaH - midH) / 2;
   const int     inputYLocal = hintRowH + arrowH;
 
-  Uni.Lcd.fillRect(bodyX(), bodyY() + statsH, bodyW(), midY - statsH, TFT_BLACK);
-  Uni.Lcd.fillRect(bodyX(), bodyY() + midY + midH, bodyW(), bodyH() - hintH - (midY + midH), TFT_BLACK);
+  _lvSpr()->fillRect(_bx(), _by() + statsH, bodyW(), midY - statsH, TFT_BLACK);
+  _lvSpr()->fillRect(_bx(), _by() + midY + midH, bodyW(), bodyH() - hintH - (midY + midH), TFT_BLACK);
 
   {
-    Sprite sp(&Uni.Lcd);
+    Sprite sp(_lvSpr());
     sp.createSprite(bodyW(), statsH);
     sp.fillSprite(TFT_BLACK);
     sp.setTextSize(1);
@@ -492,12 +507,12 @@ void GameNumberGuessScreen::_renderPlay()
       sp.setTextColor(TFT_DARKGREY, TFT_BLACK);
       sp.drawString(buf, bodyW() - 2, 1);
     }
-    sp.pushSprite(bodyX(), bodyY());
+    sp.pushSprite(_bx(), _by());
     sp.deleteSprite();
   }
 
   {
-    Sprite sp(&Uni.Lcd);
+    Sprite sp(_lvSpr());
     sp.createSprite(bodyW(), midH);
     sp.fillSprite(TFT_BLACK);
     sp.setTextSize(1);
@@ -545,12 +560,12 @@ void GameNumberGuessScreen::_renderPlay()
       }
       sp.setTextSize(1);
     }
-    sp.pushSprite(bodyX(), bodyY() + midY);
+    sp.pushSprite(_bx(), _by() + midY);
     sp.deleteSprite();
   }
 
   {
-    Sprite sp(&Uni.Lcd);
+    Sprite sp(_lvSpr());
     sp.createSprite(bodyW(), hintH);
     sp.fillSprite(TFT_BLACK);
     sp.setTextSize(1);
@@ -573,7 +588,7 @@ void GameNumberGuessScreen::_renderPlay()
         sp.drawString("[Back] Menu", 0, hintH - 1);
     }
 #endif
-    sp.pushSprite(bodyX(), bodyY() + bodyH() - hintH);
+    sp.pushSprite(_bx(), _by() + bodyH() - hintH);
     sp.deleteSprite();
   }
 }
@@ -587,28 +602,32 @@ void GameNumberGuessScreen::_renderResult()
   if (_prevState == _state) return;
   _prevState = _state;
 
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // game renders into the canvas sprite
+#else
   auto& lcd = Uni.Lcd;
-  lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
+#endif
+  lcd.fillRect(_bx(), _by(), bodyW(), bodyH(), TFT_BLACK);
 
-  const int cx = bodyX() + bodyW() / 2;
+  const int cx = _bx() + bodyW() / 2;
   char buf[32];
 
   lcd.setTextDatum(TC_DATUM);
 
   lcd.setTextSize(2);
   lcd.setTextColor(won ? Config.getThemeColor() : TFT_RED, TFT_BLACK);
-  lcd.drawString(won ? "YOU WIN!" : "GAME OVER", cx, bodyY() + 4);
+  lcd.drawString(won ? "YOU WIN!" : "GAME OVER", cx, _by() + 4);
 
-  lcd.drawFastHLine(bodyX() + 8, bodyY() + 24, bodyW() - 16, TFT_DARKGREY);
+  lcd.drawFastHLine(_bx() + 8, _by() + 24, bodyW() - 16, TFT_DARKGREY);
 
   lcd.setTextSize(1);
   lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  lcd.drawString("The answer was", cx, bodyY() + 28);
+  lcd.drawString("The answer was", cx, _by() + 28);
 
   snprintf(buf, sizeof(buf), "%d", _target);
   lcd.setTextSize(2);
   lcd.setTextColor(TFT_WHITE, TFT_BLACK);
-  lcd.drawString(buf, cx, bodyY() + 38);
+  lcd.drawString(buf, cx, _by() + 38);
 
   lcd.setTextSize(1);
   if (won) {
@@ -621,41 +640,45 @@ void GameNumberGuessScreen::_renderResult()
     snprintf(buf, sizeof(buf), "%d guesses used", _guesses);
   }
   lcd.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  lcd.drawString(buf, cx, bodyY() + 58);
+  lcd.drawString(buf, cx, _by() + 58);
 
   if (won && _newRank >= 0) {
     snprintf(buf, sizeof(buf), "New #%d Best!", _newRank + 1);
     lcd.setTextSize(2);
     lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
-    lcd.drawString(buf, cx, bodyY() + 72);
+    lcd.drawString(buf, cx, _by() + 72);
   }
 
   lcd.setTextSize(1);
   lcd.setTextDatum(BC_DATUM);
   lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  lcd.drawString("Press to continue", cx, bodyY() + bodyH() - 2);
+  lcd.drawString("Press to continue", cx, _by() + bodyH() - 2);
 }
 
 // ── _renderHighScores ─────────────────────────────────────────────────────────
 
 void GameNumberGuessScreen::_renderHighScores()
 {
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // game renders into the canvas sprite
+#else
   auto& lcd = Uni.Lcd;
+#endif
   bool firstTime = (_prevState != STATE_HIGH_SCORES);
   if (firstTime) {
-    lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
+    lcd.fillRect(_bx(), _by(), bodyW(), bodyH(), TFT_BLACK);
     _prevState      = STATE_HIGH_SCORES;
     _lastHsViewDiff = 0xFF;
 
     const int cx = bodyW() / 2;
-    Sprite sp(&Uni.Lcd);
+    Sprite sp(_lvSpr());
     sp.createSprite(bodyW(), 10);
     sp.fillSprite(TFT_BLACK);
     sp.setTextSize(1);
     sp.setTextColor(TFT_DARKGREY, TFT_BLACK);
     sp.setTextDatum(BC_DATUM);
     sp.drawString("[Up/Dn] Switch diff  [Back] Return", cx, 9);
-    sp.pushSprite(bodyX(), bodyY() + bodyH() - 10);
+    sp.pushSprite(_bx(), _by() + bodyH() - 10);
     sp.deleteSprite();
   }
 
@@ -664,7 +687,7 @@ void GameNumberGuessScreen::_renderHighScores()
 
   const int headerH = 16;
   {
-    Sprite sp(&Uni.Lcd);
+    Sprite sp(_lvSpr());
     sp.createSprite(bodyW(), headerH);
     sp.fillSprite(TFT_BLACK);
     sp.setTextSize(1);
@@ -681,7 +704,7 @@ void GameNumberGuessScreen::_renderHighScores()
     sp.setTextColor(TFT_DARKGREY, TFT_BLACK);
     sp.drawString(pageBuf, bodyW() - 1, 2);
 
-    sp.pushSprite(bodyX(), bodyY());
+    sp.pushSprite(_bx(), _by());
     sp.deleteSprite();
   }
 
@@ -689,7 +712,7 @@ void GameNumberGuessScreen::_renderHighScores()
   const int startY = 18;
   const int listH  = kMaxScores * lineH;
   {
-    Sprite sp(&Uni.Lcd);
+    Sprite sp(_lvSpr());
     sp.createSprite(bodyW(), listH);
     sp.fillSprite(TFT_BLACK);
     sp.setTextSize(1);
@@ -714,7 +737,7 @@ void GameNumberGuessScreen::_renderHighScores()
       }
       sp.drawString(buf, bodyW() - 8, i * lineH);
     }
-    sp.pushSprite(bodyX(), bodyY() + startY);
+    sp.pushSprite(_bx(), _by() + startY);
     sp.deleteSprite();
   }
 }

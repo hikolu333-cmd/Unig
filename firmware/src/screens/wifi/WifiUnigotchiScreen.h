@@ -8,6 +8,9 @@
 
 #include "ui/templates/BaseScreen.h"
 #include "utils/network/WifiAttackUtil.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/SpriteCanvas.h"
+#endif
 #include "utils/MoodFace.h"   // MoodFace::Mood enum + MoodMsg phrases
 #include "utils/MoodArt.h"    // rasterized SVG face bitmaps
 
@@ -223,4 +226,11 @@ private:
   void _drawBody(int bx, int by, int bw, int h);
   void _drawBodyText(int bx, int by, int bw, int h);
   void _drawStats(int bx, int by, int bw);
+
+#ifdef USE_LVGL_SHELL
+  // Whole scene is pixel art (faces, text lines) drawn region-by-region with
+  // dirty flags — redirected into a full-body canvas sprite and bridged.
+  SpriteCanvas _scene;
+  Sprite*      _spr = nullptr;   // redirect target while rendering
+#endif
 };

@@ -301,8 +301,13 @@ void GameQuenswerScreen::_submit()
 
 void GameQuenswerScreen::_renderSetup()
 {
+#ifdef USE_LVGL_SHELL
+  if (!_scene.ensure(Uni.Lcd, bodyW(), bodyH())) return;
+  Sprite& sp = _scene.sprite();
+#else
   Sprite sp(&Uni.Lcd);
   sp.createSprite(bodyW(), bodyH());
+#endif
   sp.fillSprite(TFT_BLACK);
 
   sp.setTextDatum(TC_DATUM);
@@ -352,14 +357,23 @@ void GameQuenswerScreen::_renderSetup()
     }
   }
 
+#ifdef USE_LVGL_SHELL
+  _scene.flush();
+#else
   sp.pushSprite(bodyX(), bodyY());
   sp.deleteSprite();
+#endif
 }
 
 void GameQuenswerScreen::_renderHandoff()
 {
+#ifdef USE_LVGL_SHELL
+  if (!_scene.ensure(Uni.Lcd, bodyW(), bodyH())) return;
+  Sprite& sp = _scene.sprite();
+#else
   Sprite sp(&Uni.Lcd);
   sp.createSprite(bodyW(), bodyH());
+#endif
   sp.fillSprite(TFT_BLACK);
 
   const int cx = bodyW() / 2;
@@ -381,8 +395,12 @@ void GameQuenswerScreen::_renderHandoff()
   sp.setTextDatum(BC_DATUM);
   sp.drawString("Press to begin", cx, bodyH() - 2);
 
+#ifdef USE_LVGL_SHELL
+  _scene.flush();
+#else
   sp.pushSprite(bodyX(), bodyY());
   sp.deleteSprite();
+#endif
 }
 
 void GameQuenswerScreen::_renderPlay()
@@ -394,8 +412,13 @@ void GameQuenswerScreen::_renderPlay()
 #endif
 
   const int W = bodyW(), H = bodyH();
+#ifdef USE_LVGL_SHELL
+  if (!_scene.ensure(Uni.Lcd, W, H)) return;
+  Sprite& sp = _scene.sprite();
+#else
   Sprite sp(&Uni.Lcd);
   sp.createSprite(W, H);
+#endif
   sp.fillSprite(TFT_BLACK);
 
   // Tries indicator (top-right)
@@ -506,15 +529,24 @@ void GameQuenswerScreen::_renderPlay()
     sp.drawString("Type  [Enter] Guess  [Back] Erase", W / 2, H - 1);
   }
 
+#ifdef USE_LVGL_SHELL
+  _scene.flush();
+#else
   sp.pushSprite(bodyX(), bodyY());
   sp.deleteSprite();
+#endif
 }
 
 void GameQuenswerScreen::_renderResult()
 {
   const int W = bodyW(), H = bodyH();
+#ifdef USE_LVGL_SHELL
+  if (!_scene.ensure(Uni.Lcd, W, H)) return;
+  Sprite& sp = _scene.sprite();
+#else
   Sprite sp(&Uni.Lcd);
   sp.createSprite(W, H);
+#endif
   sp.fillSprite(TFT_BLACK);
   const int cx = W / 2;
 
@@ -568,6 +600,10 @@ void GameQuenswerScreen::_renderResult()
   sp.setTextColor(TFT_DARKGREY, TFT_BLACK);
   sp.drawString("Press to continue", cx, H - 2);
 
+#ifdef USE_LVGL_SHELL
+  _scene.flush();
+#else
   sp.pushSprite(bodyX(), bodyY());
   sp.deleteSprite();
+#endif
 }

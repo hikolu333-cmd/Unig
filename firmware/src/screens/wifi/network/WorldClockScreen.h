@@ -9,6 +9,9 @@
 #include "ui/templates/BaseScreen.h"
 #include <WiFi.h>
 #include <time.h>
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/LvglUi.h"
+#endif
 
 class WorldClockScreen : public BaseScreen
 {
@@ -28,6 +31,11 @@ private:
   uint32_t _lastRenderTime = 0;
   bool     _synced         = false;
   bool     _chromeDrawn    = false;
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* _lblOffset = nullptr;   // "UTC +h:mm" (grey, above center)
+  lv_obj_t* _lblTime   = nullptr;   // "%H:%M:%S" (large, center)
+  lv_obj_t* _lblFooter = nullptr;   // "[Up/Dn] Offset" control hint
+#endif
 
   void _adjustOffset(int delta) {
     _offsetMinutes += delta;

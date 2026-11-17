@@ -61,9 +61,14 @@ void FileViewerScreen::onInit() {
     return;
   }
 
+#ifdef USE_LVGL_SHELL
+  // LVGL mode: TextScrollView owns wrapping, scrolling and the scrollbar.
+  _view.setContent(_content);
+#else
   if (_wrap) _parseLinesWrapped();
   else       _parseLines();
   _visibleLines = bodyH() / LINE_HEIGHT;
+#endif
 
   int n = Achievement.inc("fileview_first");
   if (n == 1) Achievement.unlock("fileview_first");
@@ -78,6 +83,9 @@ void FileViewerScreen::onUpdate() {
     return;
   }
 
+#ifdef USE_LVGL_SHELL
+  _view.onNav(dir);
+#else
   uint16_t maxScroll = (_lineCount > _visibleLines) ? _lineCount - _visibleLines : 0;
 
   if (dir == INavigation::DIR_UP && _scrollOffset > 0) {
@@ -95,12 +103,14 @@ void FileViewerScreen::onUpdate() {
     _scrollOffset = (_scrollOffset + jump > maxScroll) ? maxScroll : _scrollOffset + jump;
     render();
   }
+#endif
 }
 
 void FileViewerScreen::onRender() {
   _renderContent();
 }
 
+#ifndef USE_LVGL_SHELL
 void FileViewerScreen::_parseLines() {
   _lineCount = 0;
   _lines = (const char**)malloc(MAX_LINES * sizeof(const char*));
@@ -169,8 +179,22 @@ void FileViewerScreen::_parseLinesWrapped() {
     }
   }
 }
+#endif
 
 void FileViewerScreen::_renderContent() {
+#ifdef USE_LVGL_SHELL
+  if (_content.length() == 0) {
+    if (!_lblEmpty) {
+      _lblEmpty = lv_label_create(LvglUi::viewParent());
+      lv_obj_set_style_text_font(_lblEmpty, &lv_font_montserrat_14, 0);
+      lv_obj_set_style_text_color(_lblEmpty, LvglUi::c565(TFT_DARKGREY), 0);
+      lv_obj_center(_lblEmpty);
+      lv_label_set_text(_lblEmpty, "(empty)");
+    }
+    return;
+  }
+  _view.render(bodyX(), bodyY(), bodyW(), bodyH());
+#else
   auto& lcd = Uni.Lcd;
 
   if (!_lines || _lineCount == 0) {
@@ -217,6 +241,7 @@ void FileViewerScreen::_renderContent() {
     lcd.fillRect(sbX, bodyY(), 2, barH, 0x2104);
     lcd.fillRect(sbX, bodyY() + thumbY, 2, thumbH, Config.getThemeColor());
   }
+#endif
 }
 
 void FileViewerScreen::_goBack() {

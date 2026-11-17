@@ -16,12 +16,22 @@ void FileHexViewerScreen::onInit()
   // Layout: each row = [XX ×n] [gap≥2chars] [c×n]
   // total chars = 3n + gap + n = 4n + gap, gap ≥ 2
   // solve for max n: n = (charsPerLine - 2) / 4
+#ifdef USE_LVGL_SHELL
+  // montserrat_14 glyphs are wider than font-1 — budget ~9 px per char.
+  uint8_t charsPerLine = (uint8_t)(bodyW() / 9);
+  uint8_t n = (charsPerLine > 2) ? (charsPerLine - 2) / 4 : 1;
+  if (n < 1) n = 1;
+  if (n > kMaxBytesPerRow) n = kMaxBytesPerRow;
+  _bytesPerRow = n;
+  _visibleRows = (uint8_t)(bodyH() / 16);
+#else
   uint8_t charsPerLine = (uint8_t)(bodyW() / kCharW);
   uint8_t n = (charsPerLine > 2) ? (charsPerLine - 2) / 4 : 1;
   if (n < 1) n = 1;
   if (n > kMaxBytesPerRow) n = kMaxBytesPerRow;
   _bytesPerRow = n;
   _visibleRows = (uint8_t)(bodyH() / kLineH);
+#endif
 
   if (_data) {
     _fileSize = _dataLen;
@@ -96,6 +106,9 @@ void FileHexViewerScreen::onRender()
 
 void FileHexViewerScreen::_renderHex()
 {
+#ifdef USE_LVGL_SHELL
+  _renderHexLv();
+#else
   auto& lcd = Uni.Lcd;
   uint8_t n = _bytesPerRow;
 
@@ -182,7 +195,81 @@ void FileHexViewerScreen::_renderHex()
     lcd.fillRect(sbX, bodyY(), 2, barH, 0x2104);
     lcd.fillRect(sbX, bodyY() + thumbY, 2, thumbH, Config.getThemeColor());
   }
+#endif
 }
+
+#ifdef USE_LVGL_SHELL
+void FileHexViewerScreen::_renderHexLv()
+{
+  if (!_cont) {
+    _cont = lv_obj_create(LvglUi::viewParent());
+    lv_obj_set_pos(_cont, 0, 0);
+    lv_obj_set_size(_cont, bodyW(), bodyH());
+    lv_obj_set_style_bg_opa(_cont, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_cont, 0, 0);
+    lv_obj_set_style_pad_all(_cont, 0, 0);
+    lv_obj_set_style_pad_row(_cont, 0, 0);
+    lv_obj_set_flex_flow(_cont, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scrollbar_mode(_cont, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(_cont, LV_OBJ_FLAG_SCROLLABLE);
+  }
+
+  const uint8_t n = _bytesPerRow;
+  fs::File f;
+  if (!_data) {
+    if (!Uni.Storage || !Uni.Storage->isAvailable()) return;
+    f = Uni.Storage->open(_path.c_str(), "r");
+    if (!f) return;
+    f.seek(_byteOffset);
+  }
+
+  lv_obj_clean(_cont);
+
+  uint8_t buf[kMaxBytesPerRow];
+  for (uint8_t row = 0; row < _visibleRows; row++) {
+    int bytesRead = 0;
+    if (_data) {
+      const size_t pos = (size_t)_byteOffset + (size_t)row * n;
+      if (pos < _dataLen) {
+        bytesRead = (int)min((size_t)n, _dataLen - pos);
+        memcpy(buf, _data + pos, (size_t)bytesRead);
+      }
+    } else {
+      bytesRead = (f && f.available()) ? (int)f.read(buf, n) : 0;
+    }
+
+    char hex[3 * kMaxBytesPerRow + 1] = {};
+    char chars[kMaxBytesPerRow + 1] = {};
+    for (int b = 0; b < bytesRead; b++) {
+      snprintf(hex + 3 * b, 4, "%02X ", buf[b]);
+      uint8_t byte = buf[b];
+      chars[b] = (byte >= 0x20 && byte < 0x7F) ? (char)byte : '.';
+    }
+
+    if (bytesRead <= 0) break;
+
+    lv_obj_t* rowObj = lv_obj_create(_cont);
+    lv_obj_set_size(rowObj, lv_pct(100), 16);
+    lv_obj_set_style_bg_opa(rowObj, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(rowObj, 0, 0);
+    lv_obj_set_style_pad_all(rowObj, 0, 0);
+    lv_obj_clear_flag(rowObj, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* lHex = lv_label_create(rowObj);
+    lv_obj_set_pos(lHex, 0, 0);
+    lv_obj_set_style_text_font(lHex, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lHex, lv_color_white(), 0);
+    lv_label_set_text(lHex, hex);
+
+    lv_obj_t* lChar = lv_label_create(rowObj);
+    lv_obj_align(lChar, LV_ALIGN_RIGHT_MID, -4, 0);
+    lv_obj_set_style_text_font(lChar, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lChar, LvglUi::c565(TFT_GREEN), 0);
+    lv_label_set_text(lChar, chars);
+  }
+  if (f) f.close();
+}
+#endif
 
 void FileHexViewerScreen::_goBack()
 {

@@ -70,6 +70,31 @@ void WorldClockScreen::onRender() {
     if (Uni.Speaker) Uni.Speaker->playNotification();
   }
 
+  // Dynamic content (offset label + ticking clock).
+#ifdef USE_LVGL_SHELL
+  if (!_chromeDrawn) {
+    lv_obj_t* root = LvglUi::viewParent();
+    const int w = bodyW(), h = bodyH();
+    const int contentH = h - 12 - 1;
+
+    _lblOffset = lv_label_create(root);
+    lv_obj_set_style_text_font(_lblOffset, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_lblOffset, LvglUi::c565(TFT_DARKGREY), 0);
+    lv_obj_align(_lblOffset, LV_ALIGN_TOP_MID, 0, contentH / 2 - 20);
+
+    _lblTime = lv_label_create(root);
+    lv_obj_set_style_text_font(_lblTime, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(_lblTime, lv_color_white(), 0);
+    lv_obj_align(_lblTime, LV_ALIGN_TOP_MID, 0, contentH / 2 + 2);
+
+    _lblFooter = lv_label_create(root);
+    lv_obj_set_style_text_font(_lblFooter, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_lblFooter, LvglUi::c565(TFT_DARKGREY), 0);
+    lv_obj_align(_lblFooter, LV_ALIGN_BOTTOM_MID, 0, -2);
+    lv_label_set_text(_lblFooter, "[Up/Dn] Offset");
+    _chromeDrawn = true;
+  }
+#else
   // Static chrome: dedicated control footer.
   if (!_chromeDrawn) {
     lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
@@ -81,11 +106,22 @@ void WorldClockScreen::onRender() {
     lcd.drawString("[Up/Dn] Offset", cx, footerY + 7);
     _chromeDrawn = true;
   }
+#endif
 
   // apply offset
   timeInfo.tm_min += _offsetMinutes;
   mktime(&timeInfo);
 
+  char offsetStr[12];
+  snprintf(offsetStr, sizeof(offsetStr), "UTC %+d:%02d",
+           _offsetMinutes / 60, abs(_offsetMinutes % 60));
+  char timeStr[12];
+  strftime(timeStr, sizeof(timeStr), "%H:%M:%S", &timeInfo);
+
+#ifdef USE_LVGL_SHELL
+  lv_label_set_text(_lblOffset, offsetStr);
+  lv_label_set_text(_lblTime, timeStr);
+#else
   // Dynamic region (offset label + ticking clock) — composited in a sprite
   // and pushed atomically so the user never sees the fillRect/drawString
   // intermediate state.
@@ -96,15 +132,10 @@ void WorldClockScreen::onRender() {
   spr.fillSprite(TFT_BLACK);
   spr.setTextDatum(MC_DATUM);
 
-  char offsetStr[12];
-  snprintf(offsetStr, sizeof(offsetStr), "UTC %+d:%02d",
-           _offsetMinutes / 60, abs(_offsetMinutes % 60));
   spr.setTextSize(1);
   spr.setTextColor(TFT_DARKGREY, TFT_BLACK);
   spr.drawString(offsetStr, SP_W / 2, 6);
 
-  char timeStr[12];
-  strftime(timeStr, sizeof(timeStr), "%H:%M:%S", &timeInfo);
   spr.setTextSize(2);
   spr.setTextColor(TFT_WHITE, TFT_BLACK);
   spr.drawString(timeStr, SP_W / 2, 24);
@@ -112,4 +143,5 @@ void WorldClockScreen::onRender() {
   // Center sprite around cy-4 so offset sits at ~cy-14 and clock at ~cy
   spr.pushSprite(cx - SP_W / 2, cy - 4 - SP_H / 2);
   spr.deleteSprite();
+#endif
 }

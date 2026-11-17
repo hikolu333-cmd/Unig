@@ -1,5 +1,8 @@
 #pragma once
 #include "ui/templates/BaseScreen.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/LvglUi.h"
+#endif
 
 class ChameleonMagicScreen : public BaseScreen {
 public:
@@ -17,6 +20,10 @@ private:
   bool   _started   = false;
   bool   _needsDraw = true;
   String _result;
+
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* _lblResult = nullptr;  // detection result (white, centered)
+#endif
 
   void _run();
 };

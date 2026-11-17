@@ -3,10 +3,15 @@
 #include "core/Device.h"
 #include "core/INavigation.h"
 #include "core/ConfigManager.h"
+#include "ui/lvgl/LvglUi.h"   // LvglUi::pump() is a no-op without USE_LVGL_SHELL
 
 // Word-wrapped, scrollable text region. Pure view — owner screen calls
 // setContent()/updateContent(), then render(x,y,w,h) on draw and onNav(dir)
 // on input. Up/Down scroll one line, Left/Right page.
+// Dual-mode:
+//  - legacy: manual wrap into sprite rows;
+//  - USE_LVGL_SHELL: a single LVGL label (LVGL wraps the text itself) in a
+//    scrolling container on the current page root.
 class TextScrollView
 {
 public:
@@ -14,6 +19,137 @@ public:
     WRAP_WORD,
     WRAP_CHARACTER,
   };
+
+#ifdef USE_LVGL_SHELL
+  static constexpr int LINE_H = 16;   // montserrat_14 row height
+
+  // WRAP_CHARACTER (terminal transcripts) keeps every column position: LVGL
+  // word-wraps, breaking overlong words at any character — good enough for
+  // both modes, so the mode is only honored by the legacy renderer.
+
+  void setWrapMode(WrapMode mode) { (void)mode; }
+
+  void setContent(const String& content)
+  {
+    _content = content;
+    _pendingBottom = false;
+    _dirty = true;
+    if (_cont) lv_obj_scroll_to_y(_cont, 0, LV_ANIM_OFF);   // fresh content starts at the top
+  }
+
+  // Replace content without necessarily resetting the user's scroll position.
+  // followBottom=true is intended for live logs/terminals that should keep
+  // following new content while the user is already at the bottom.
+  void updateContent(const String& content, bool followBottom = false)
+  {
+    if (content == _content) {
+      if (followBottom) _pendingBottom = true;
+      return;
+    }
+
+    bool atBottom = isAtBottom();
+    _content = content;
+    _dirty = true;
+    _pendingBottom = followBottom && atBottom;
+  }
+
+  void resetScroll()
+  {
+    if (_cont) lv_obj_scroll_to_y(_cont, 0, LV_ANIM_OFF);
+    _pendingBottom = false;
+  }
+
+  void scrollToBottom()
+  {
+    if (!_cont) { _pendingBottom = true; return; }
+    lv_obj_scroll_to_y(_cont, LV_COORD_MAX, LV_ANIM_OFF);
+    _pendingBottom = false;
+  }
+
+  bool isAtBottom() const
+  {
+    if (!_cont) return true;
+    // Scroll position is within one line of the end → "at bottom".
+    lv_coord_t y = lv_obj_get_scroll_y(_cont);
+    return y >= _maxScroll() - LINE_H;
+  }
+
+  void render(int x, int y, int w, int h)
+  {
+    if (!_cont) _build();
+    // viewParent() sits at the page's body top — map absolute body coords.
+    lv_obj_set_pos(_cont, x, y - LvglUi::viewOffsetY());
+    lv_obj_set_size(_cont, w, h);
+    if (_dirty) {
+      lv_label_set_text(_label, _content.c_str());
+      _dirty = false;
+    }
+    if (_pendingBottom) scrollToBottom();
+  }
+
+  bool onNav(INavigation::Direction dir)
+  {
+    if (!_cont) return false;
+    int visible = _visibleLines();
+    int maxOffset = _maxScroll();
+
+    if (dir == INavigation::DIR_UP && lv_obj_get_scroll_y(_cont) > 0) {
+      lv_obj_scroll_by(_cont, 0, LINE_H, LV_ANIM_OFF);
+      return true;
+    }
+    if (dir == INavigation::DIR_DOWN && lv_obj_get_scroll_y(_cont) < maxOffset) {
+      lv_obj_scroll_by(_cont, 0, -LINE_H, LV_ANIM_OFF);
+      return true;
+    }
+    if (dir == INavigation::DIR_LEFT && lv_obj_get_scroll_y(_cont) > 0) {
+      lv_obj_scroll_by(_cont, 0, visible * LINE_H, LV_ANIM_OFF);
+      return true;
+    }
+    if (dir == INavigation::DIR_RIGHT && lv_obj_get_scroll_y(_cont) < maxOffset) {
+      lv_obj_scroll_by(_cont, 0, -visible * LINE_H, LV_ANIM_OFF);
+      return true;
+    }
+    return false;
+  }
+
+private:
+  String _content;
+  bool   _dirty = true;
+  bool   _pendingBottom = false;
+  lv_obj_t* _cont  = nullptr;
+  lv_obj_t* _label = nullptr;
+
+  int _visibleLines() const
+  {
+    return _cont ? max(1, (int)lv_obj_get_height(_cont) / LINE_H) : 1;
+  }
+
+  // Greatest scroll offset: content height (label) minus the viewport.
+  int _maxScroll() const
+  {
+    if (!_cont) return 0;
+    int contentH = _label ? lv_obj_get_height(_label) : 0;
+    int maxOff = contentH - (int)lv_obj_get_height(_cont);
+    return maxOff > 0 ? maxOff : 0;
+  }
+
+  void _build() {
+    LvglUi::ensure();
+    _cont = lv_obj_create(LvglUi::viewParent());
+    lv_obj_set_style_bg_opa(_cont, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_cont, 0, 0);
+    lv_obj_set_style_pad_all(_cont, 2, 0);
+    lv_obj_set_scrollbar_mode(_cont, LV_SCROLLBAR_MODE_OFF);
+
+    _label = lv_label_create(_cont);
+    lv_obj_set_width(_label, lv_pct(100));
+    lv_label_set_long_mode(_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_label, lv_color_white(), 0);
+    lv_label_set_text(_label, "");
+  }
+
+#else // ── legacy TFT mode ───────────────────────────────────────────────────
 
   void setWrapMode(WrapMode mode)
   {
@@ -258,4 +394,5 @@ private:
       lcd.fillRect(sbX, _y + sbY, kScrollW, sbH, Config.getThemeColor());
     }
   }
+#endif
 };

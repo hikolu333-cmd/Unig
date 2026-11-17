@@ -1282,7 +1282,7 @@ void LuaEngine::servicePendingPopup() {
       break;
     }
     case POPUP_SELECT: {
-      InputSelectAction::Option opts[kMaxSelectOptions];
+      InputSelectAction::Option opts[kMaxSelectOptions] = {};
       int n = _popupOptionCount;
       if (n > kMaxSelectOptions) n = kMaxSelectOptions;
       for (int i = 0; i < n; i++) {

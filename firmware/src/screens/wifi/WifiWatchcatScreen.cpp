@@ -82,6 +82,9 @@ void WifiWatchcatScreen::_enterView(View view)
 #ifdef DEVICE_HAS_TOUCH_NAV
   Uni.Nav->setSuppressKeys(false);
 #endif
+#ifdef USE_LVGL_SHELL
+  _gridSetVisible(false);
+#endif
   _holdCell  = -1;
   _view      = view;
   _itemCount = 0;
@@ -195,7 +198,12 @@ void WifiWatchcatScreen::onUpdate()
         Uni.Nav->drawOverlay();
         Uni.Nav->setSuppressKeys(true);
 #endif
+#ifdef USE_LVGL_SHELL
+        _scroll.hide();   // detail list yields the body back to the grid
+        _gridSetVisible(true);
+#else
         Uni.Lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
+#endif
         render();
         return;
       }
@@ -226,12 +234,26 @@ void WifiWatchcatScreen::onRender()
   }
 
   if (_itemCount > 0) {
+#ifdef USE_LVGL_SHELL
+    if (_lblEmpty) lv_obj_add_flag(_lblEmpty, LV_OBJ_FLAG_HIDDEN);
+#endif
     _scroll.render(bodyX(), bodyY(), bodyW(), bodyH());
   } else {
+#ifdef USE_LVGL_SHELL
+    if (!_lblEmpty) {
+      _lblEmpty = lv_label_create(LvglUi::viewParent());
+      lv_obj_set_style_text_font(_lblEmpty, &lv_font_montserrat_14, 0);
+      lv_obj_set_style_text_color(_lblEmpty, LvglUi::c565(TFT_DARKGREY), 0);
+      lv_obj_center(_lblEmpty);
+    }
+    lv_obj_clear_flag(_lblEmpty, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(_lblEmpty, "Monitoring...");
+#else
     Uni.Lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
     Uni.Lcd.setTextDatum(MC_DATUM);
     Uni.Lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
     Uni.Lcd.drawString("Monitoring...", bodyX() + bodyW() / 2, bodyY() + bodyH() / 2);
+#endif
   }
 }
 
@@ -502,7 +524,52 @@ void WifiWatchcatScreen::_drawGridCell(int idx, int count)
     "Probe Requests", "Authentication", "Association", "EAPOL"
   };
 
-#ifdef DEVICE_HAS_TOUCH_NAV
+#ifdef USE_LVGL_SHELL
+  if (!_cells[idx]) {
+    const int cellW = bodyW() / 2;
+    const int cellH = bodyH() / 2;
+    const int px    = (idx % 2) * cellW;
+    const int py    = (idx / 2) * cellH;
+
+    lv_obj_t* c = lv_obj_create(LvglUi::viewParent());
+    lv_obj_set_pos(c, px + 2, py + 2);
+    lv_obj_set_size(c, cellW - 4, cellH - 4);
+    lv_obj_set_style_radius(c, 4, 0);
+    lv_obj_set_style_bg_color(c, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(c, 2, 0);
+    lv_obj_set_style_pad_all(c, 0, 0);
+    lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* name = lv_label_create(c);
+    lv_obj_set_style_text_font(name, &lv_font_montserrat_14, 0);
+    lv_obj_align(name, LV_ALIGN_TOP_MID, 0, 6);
+    lv_label_set_text(name, kNames[idx]);
+
+    lv_obj_t* cnt = lv_label_create(c);
+    lv_obj_set_style_text_font(cnt, &lv_font_montserrat_20, 0);
+    lv_obj_align(cnt, LV_ALIGN_CENTER, 0, 4);
+
+    _cells[idx]      = c;
+    _cellCntLbl[idx] = cnt;
+  }
+
+  const bool sel = (idx == (int)_gridSel);
+  lv_obj_set_style_border_color(_cells[idx],
+                                sel ? LvglUi::c565(Config.getThemeColor())
+                                    : LvglUi::c565(0x2104), 0);
+  lv_obj_t* name = lv_obj_get_child(_cells[idx], 0);
+  lv_obj_set_style_text_color(name,
+                              sel ? lv_color_white()
+                                  : LvglUi::c565(TFT_LIGHTGREY), 0);
+
+  char buf[6];
+  snprintf(buf, sizeof(buf), "%d", count);
+  lv_label_set_text(_cellCntLbl[idx], buf);
+  lv_obj_set_style_text_color(_cellCntLbl[idx],
+                              count > 0 ? LvglUi::c565(TFT_GREEN)
+                                        : LvglUi::c565(TFT_DARKGREY), 0);
+#elif defined(DEVICE_HAS_TOUCH_NAV)
   const int backW = bodyW() / 6;
   const int gw    = bodyW() - backW;
   const int cellW = gw / 2;
@@ -685,3 +752,14 @@ void WifiWatchcatScreen::_promiscuousCb(void* buf, wifi_promiscuous_pkt_type_t t
 
   _pushEvent(EVENT_EAPOL, sta, ap);
 }
+
+#ifdef USE_LVGL_SHELL
+void WifiWatchcatScreen::_gridSetVisible(bool visible)
+{
+  for (int i = 0; i < 4; i++) {
+    if (!_cells[i]) continue;
+    if (visible) lv_obj_clear_flag(_cells[i], LV_OBJ_FLAG_HIDDEN);
+    else         lv_obj_add_flag(_cells[i], LV_OBJ_FLAG_HIDDEN);
+  }
+}
+#endif

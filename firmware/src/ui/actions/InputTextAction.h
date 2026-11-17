@@ -8,6 +8,7 @@
 #include "utils/uart/UartFileManager.h"
 #include "core/ConfigManager.h"
 #include "utils/keyboard/HIDKeyboardUtil.h"
+#include "ui/lvgl/LvglUi.h"   // LvglUi::pump() is a no-op without USE_LVGL_SHELL
 
 class InputTextAction
 {
@@ -400,6 +401,7 @@ private:
       Uni.update();
       UartFM.poll(); // read remote input so nav works in this dialog
       if (Mirror.dirty()) Mirror.pump(); // flush only when this overlay redrew
+      LvglUi::pump();
 
       // Fire character Shift as soon as Select crosses the long-press threshold.
       // Do not wait for release. Special/action keys keep their normal release
@@ -603,7 +605,11 @@ private:
     }
 
     _hidReleaseModifiers();
+#ifdef USE_LVGL_SHELL
+    _lvClose();
+#else
     Uni.Lcd.fillScreen(TFT_BLACK);
+#endif
     return _cancelled ? "" : _input;
   }
 
@@ -901,6 +907,179 @@ private:
     }
   }
 
+#ifdef USE_LVGL_SHELL
+  // ── grid drawing, LVGL mode ──────────────────────────────────────────────
+  // Full-screen overlay on the top layer; cells as abs-positioned buttons at
+  // the legacy grid coordinates (touch-navigation math stays identical).
+  // Rebuilding on page switch (_drawFullGrid) re-creates the buttons.
+  lv_obj_t* _lvCard  = nullptr;
+  lv_obj_t* _lvTitle = nullptr;
+  lv_obj_t* _lvMode  = nullptr;
+  lv_obj_t* _lvInput = nullptr;
+  lv_obj_t* _lvCells[MAX_SETS] = {};
+  lv_obj_t* _lvCellLabels[MAX_SETS] = {};
+
+  void _lvBuild() {
+    LvglUi::ensure();
+    _lvCard = LvglUi::overlay();
+
+    _lvTitle = lv_label_create(_lvCard);
+    lv_obj_set_pos(_lvTitle, PAD, PAD);
+    lv_obj_set_style_text_color(_lvTitle, LvglUi::c565(Config.getThemeColor()), 0);
+    lv_label_set_text(_lvTitle, _title);
+
+    // Active keyboard-mode indicators in the upper-right corner (CAPS/123/...).
+    _lvMode = lv_label_create(_lvCard);
+    lv_obj_align(_lvMode, LV_ALIGN_TOP_RIGHT, -PAD, PAD);
+    lv_label_set_long_mode(_lvMode, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(_lvMode, Uni.Lcd.width() / 2);
+    lv_obj_set_style_text_align(_lvMode, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_color(_lvMode, LvglUi::c565(TFT_LIGHTGREY), 0);
+    lv_label_set_text(_lvMode, "");
+
+    lv_obj_t* sep = lv_obj_create(_lvCard);
+    lv_obj_set_pos(sep, PAD, PAD + 10);
+    lv_obj_set_size(sep, Uni.Lcd.width() - PAD * 2, 1);
+    lv_obj_set_style_bg_opa(sep, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(sep, LvglUi::c565(Config.getThemeColor()), 0);
+    lv_obj_set_style_border_width(sep, 0, 0);
+    lv_obj_set_style_radius(sep, 0, 0);
+    lv_obj_clear_flag(sep, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* inpBox = lv_obj_create(_lvCard);
+    lv_obj_set_pos(inpBox, PAD, HDR_H - INP_H - PAD);
+    lv_obj_set_size(inpBox, Uni.Lcd.width() - PAD * 2, INP_H);
+    lv_obj_set_style_bg_opa(inpBox, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_color(inpBox, LvglUi::c565(Config.getThemeColor()), 0);
+    lv_obj_set_style_border_width(inpBox, 1, 0);
+    lv_obj_set_style_radius(inpBox, 2, 0);
+    lv_obj_set_style_pad_all(inpBox, 0, 0);
+    lv_obj_clear_flag(inpBox, LV_OBJ_FLAG_SCROLLABLE);
+
+    _lvInput = lv_label_create(inpBox);
+    lv_obj_set_pos(_lvInput, 3, 1);
+    lv_obj_set_width(_lvInput, Uni.Lcd.width() - PAD * 2 - 6);
+    lv_label_set_long_mode(_lvInput, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(_lvInput, lv_color_white(), 0);
+    lv_label_set_text(_lvInput, "");
+  }
+
+  void _lvClose() {
+    if (_lvCard) {
+      lv_obj_del(_lvCard);
+      _lvCard = nullptr;
+      for (int i = 0; i < MAX_SETS; i++) { _lvCells[i] = nullptr; _lvCellLabels[i] = nullptr; }
+      LvglUi::repaintScreen();
+    }
+  }
+
+  void _drawFullGrid() {
+    if (!_lvCard) _lvBuild();
+    lv_label_set_text(_lvTitle, _title);
+
+    // Active keyboard-mode indicators live in the upper-right corner.
+    String modeLabel;
+    if (_hidModifiers & 0x01) modeLabel += "CTRL+";
+    if (_hidModifiers & 0x02) modeLabel += "SHFT+";
+    if (_hidModifiers & 0x04) modeLabel += "ALT+";
+    if (_hidModifiers & 0x08) modeLabel += (_profile == PROFILE_TERMINAL) ? "META+" : "GUI+";
+    if (modeLabel.length() > 0) modeLabel.remove(modeLabel.length() - 1);
+    if (_capsLock) {
+      if (modeLabel.length() > 0) modeLabel += " ";
+      modeLabel += "CAPS";
+    }
+    if (_page == PAGE_SYM) {
+      if (modeLabel.length() > 0) modeLabel += " ";
+      modeLabel += "123";
+    } else if (_page == PAGE_HID) {
+      if (modeLabel.length() > 0) modeLabel += " ";
+      modeLabel += "HTK";
+    }
+    lv_label_set_text(_lvMode, modeLabel.c_str());
+
+    _drawGridInput();
+
+    // (Re)create the cell buttons — count/layout changes with pages/modes.
+    for (int i = 0; i < MAX_SETS; i++) {
+      if (_lvCells[i]) { lv_obj_del(_lvCells[i]); _lvCells[i] = nullptr; _lvCellLabels[i] = nullptr; }
+    }
+    for (int i = 0; i < _setCount; i++) {
+      int cW, col, row;
+      if (_mode == INPUT_TEXT && i >= 30) {
+        cW = _actionCellW();
+        col = i - 30;
+        row = _charRows();
+      } else {
+        cW = _gridCellW();
+        col = i % _gridCols();
+        row = i / _gridCols();
+      }
+      int cH = _gridCellH();
+
+      lv_obj_t* cell = lv_btn_create(_lvCard);
+      lv_obj_set_pos(cell, col * cW + 1, HDR_H + row * cH + 1);
+      lv_obj_set_size(cell, cW - 2, cH - 2);
+      LvglUi::styleKey(cell);
+      lv_obj_clear_flag(cell, LV_OBJ_FLAG_SCROLLABLE);
+
+      lv_obj_t* lbl = lv_label_create(cell);
+      lv_obj_center(lbl);
+      lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+      lv_label_set_text(lbl, "");
+      _lvCells[i] = cell;
+      _lvCellLabels[i] = lbl;
+    }
+
+    for (int i = 0; i < _setCount; i++) _drawGridCell(i);
+    LvglUi::pump();
+  }
+
+  void _drawGridInput() {
+    if (!_lvInput) return;
+    String display = _input + _pendingChar;
+    if (_tapCount == 0 && _cursorVisible) display += '_';
+    if (display.length() == 0) display = _cursorVisible ? "_" : " ";
+    lv_label_set_text(_lvInput, display.c_str());
+  }
+
+  void _drawGridCell(int idx) {
+    if (idx < 0 || idx >= _setCount) return;
+    lv_obj_t* cell = _lvCells[idx];
+    lv_obj_t* lbl  = _lvCellLabels[idx];
+    if (!cell || !lbl) return;
+    const CharSet& s = _sets[idx];
+    bool hidModifierActive = s.isSpecial && _hidModifierActive(s.special);
+
+    if (!s.isSpecial && s.chars == nullptr) {
+      lv_obj_add_flag(cell, LV_OBJ_FLAG_HIDDEN);
+      return;
+    }
+    lv_obj_clear_flag(cell, LV_OBJ_FLAG_HIDDEN);
+
+    // Same label logic as the legacy renderer.
+    String l;
+    if (!s.isSpecial && _mode == INPUT_TEXT && s.chars) {
+      char shown = s.chars[0];
+      if (isalpha(s.chars[0]))
+        shown = _capsLock ? toupper(s.chars[0]) : tolower(s.chars[0]);
+      l = String(shown);
+    } else if (_mode == INPUT_TEXT && idx == 30 && _page != PAGE_HID) {
+      l = (_page == PAGE_ABC) ? "123" : ((_profile != PROFILE_STANDARD) ? "HTK" : "ABC");
+    } else {
+      l = String(s.label);
+    }
+    lv_label_set_text(lbl, l.c_str());
+
+    const bool hotkeyCell = (_page == PAGE_HID && idx < 30);
+    uint16_t fg = hidModifierActive ? Config.getThemeColor()
+                 : (s.isSpecial && !hotkeyCell ? TFT_WHITE : TFT_LIGHTGREY);
+    lv_obj_set_style_text_color(lbl, LvglUi::c565(fg), 0);
+
+    if (idx == _scrollPos) lv_obj_add_state(cell, LV_STATE_FOCUSED);
+    else                   lv_obj_clear_state(cell, LV_STATE_FOCUSED);
+  }
+
+#else
   void _drawFullGrid() {
     auto& lcd = Uni.Lcd;
     uint16_t theme = Config.getThemeColor();
@@ -1061,6 +1240,7 @@ private:
     sp.pushSprite(col * cW, HDR_H + row * cH);
     sp.deleteSprite();
   }
+#endif // USE_LVGL_SHELL
 
   // ── keyboard mode ────────────────────────────────────────────────────────────
 

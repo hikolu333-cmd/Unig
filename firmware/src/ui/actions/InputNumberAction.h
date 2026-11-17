@@ -9,6 +9,7 @@
 #include "core/Device.h"
 #include "utils/uart/UartFileManager.h"
 #include "core/ConfigManager.h"
+#include "ui/lvgl/LvglUi.h"   // LvglUi::pump() is a no-op without USE_LVGL_SHELL
 
 class InputNumberAction
 {
@@ -192,6 +193,7 @@ private:
       Uni.update();
       UartFM.poll(); // read remote input so nav works in this dialog
       if (Mirror.dirty()) Mirror.pump(); // flush only when this overlay redrew
+      LvglUi::pump();
 
       if (millis() - _lastBlinkTime >= BLINK_MS) {
         _cursorVisible = !_cursorVisible; _lastBlinkTime = millis();
@@ -265,7 +267,11 @@ private:
       delay(10);
     }
 
+#ifdef USE_LVGL_SHELL
+    _lvClose();
+#else
     Uni.Lcd.fillScreen(TFT_BLACK);
+#endif
     return _cancelled ? 0 : _input.toInt();
   }
 
@@ -292,6 +298,131 @@ private:
     }
   }
 
+#ifdef USE_LVGL_SHELL
+  // ── grid drawing, LVGL mode ──────────────────────────────────────────────
+  // The popup is a full-screen overlay on the top layer; cells are buttons at
+  // exactly the legacy grid coordinates (so the touch-navigation math above
+  // still applies on touch boards). Dummy cells are hidden.
+  lv_obj_t* _lvCard  = nullptr;
+  lv_obj_t* _lvTitle = nullptr;
+  lv_obj_t* _lvInfo  = nullptr;
+  lv_obj_t* _lvInput = nullptr;
+  lv_obj_t* _lvCells[DIGIT_COUNT] = {};
+
+  void _lvBuild() {
+    LvglUi::ensure();
+    _lvCard = LvglUi::overlay();
+
+    _lvTitle = lv_label_create(_lvCard);
+    lv_obj_set_pos(_lvTitle, PAD, PAD);
+    lv_obj_set_style_text_color(_lvTitle, LvglUi::c565(TFT_YELLOW), 0);
+    lv_label_set_text(_lvTitle, _title);
+
+    _lvInfo = lv_label_create(_lvCard);
+    lv_obj_set_pos(_lvInfo, PAD, HDR_INFO_Y);
+    lv_obj_set_width(_lvInfo, Uni.Lcd.width() - PAD * 2);
+    lv_label_set_long_mode(_lvInfo, LV_LABEL_LONG_DOT);
+    lv_label_set_text(_lvInfo, "");
+
+    // Input line: bordered box matching the legacy input row.
+    lv_obj_t* inpBox = lv_obj_create(_lvCard);
+    lv_obj_set_pos(inpBox, PAD, HDR_INP_Y);
+    lv_obj_set_size(inpBox, Uni.Lcd.width() - PAD * 2, INP_H);
+    lv_obj_set_style_bg_opa(inpBox, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_color(inpBox, LvglUi::c565(TFT_DARKGREY), 0);
+    lv_obj_set_style_border_width(inpBox, 1, 0);
+    lv_obj_set_style_radius(inpBox, 2, 0);
+    lv_obj_set_style_pad_all(inpBox, 0, 0);
+    lv_obj_clear_flag(inpBox, LV_OBJ_FLAG_SCROLLABLE);
+
+    _lvInput = lv_label_create(inpBox);
+    lv_obj_set_pos(_lvInput, 3, 1);
+    lv_obj_set_width(_lvInput, Uni.Lcd.width() - PAD * 2 - 6);
+    lv_label_set_long_mode(_lvInput, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(_lvInput, lv_color_white(), 0);
+    lv_label_set_text(_lvInput, "");
+
+    for (int i = 0; i < DIGIT_COUNT; i++) {
+      int col = i % _gridCols();
+      int row = i / _gridCols();
+      lv_obj_t* cell = lv_btn_create(_lvCard);
+      lv_obj_set_pos(cell, col * _gridCellW() + 1, _gridHdrH() + row * _gridCellH() + 1);
+      lv_obj_set_size(cell, _gridCellW() - 2, _gridCellH() - 2);
+      LvglUi::styleKey(cell);
+      lv_obj_clear_flag(cell, LV_OBJ_FLAG_SCROLLABLE);
+
+      lv_obj_t* lbl = lv_label_create(cell);
+      lv_obj_center(lbl);
+      lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+      lv_label_set_text(lbl, "");
+      _lvCells[i] = cell;
+    }
+  }
+
+  void _lvClose() {
+    if (_lvCard) {
+      lv_obj_del(_lvCard);
+      _lvCard = nullptr;
+      for (int i = 0; i < DIGIT_COUNT; i++) _lvCells[i] = nullptr;
+      LvglUi::repaintScreen();
+    }
+  }
+
+  void _drawFullGrid() {
+    if (!_lvCard) _lvBuild();
+    lv_label_set_text(_lvTitle, _title);
+    _drawGridInfo();
+    _drawGridInput();
+    for (int i = 0; i < _setCount; i++) _drawGridCell(i);
+    LvglUi::pump();
+  }
+
+  void _drawGridInput() {
+    String display = _input;
+    if (_cursorVisible) display += '_';
+    if (display.length() == 0) display = _cursorVisible ? "_" : " ";
+    if (_lvInput) lv_label_set_text(_lvInput, display.c_str());
+  }
+
+  void _drawGridInfo() {
+    if (!_lvInfo) return;
+    if (_error.length() > 0) {
+      lv_obj_set_style_text_color(_lvInfo, LvglUi::c565(TFT_RED), 0);
+      lv_label_set_text(_lvInfo, _error.c_str());
+    } else if (_hasMin || _hasMax) {
+      String s;
+      if (_hasMin && _hasMax) s = String(_minValidator) + " - " + String(_maxValidator);
+      else if (_hasMin)       s = "Min: " + String(_minValidator);
+      else                    s = "Max: " + String(_maxValidator);
+      lv_obj_set_style_text_color(_lvInfo, LvglUi::c565(TFT_DARKGREY), 0);
+      lv_label_set_text(_lvInfo, s.c_str());
+    } else {
+      lv_label_set_text(_lvInfo, "");
+    }
+    _lastError = _error;
+  }
+
+  void _drawGridCell(int idx) {
+    if (idx < 0 || idx >= _setCount) return;
+    lv_obj_t* cell = _lvCells[idx];
+    if (!cell) return;
+    const DigitSet& s = _sets[idx];
+
+    if (!s.isAction && s.label[0] == '\0') {
+      lv_obj_add_flag(cell, LV_OBJ_FLAG_HIDDEN);
+      return;
+    }
+    lv_obj_clear_flag(cell, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t* lbl = lv_obj_get_child(cell, 0);
+    if (lbl) lv_label_set_text(lbl, s.label);
+
+    if (idx == _scrollPos) lv_obj_add_state(cell, LV_STATE_FOCUSED);
+    else                   lv_obj_clear_state(cell, LV_STATE_FOCUSED);
+  }
+
+#else
+  // ── grid drawing, legacy TFT mode ────────────────────────────────────────
   void _drawFullGrid() {
     auto& lcd = Uni.Lcd;
     lcd.fillScreen(TFT_BLACK);
@@ -382,6 +513,7 @@ private:
     sp.pushSprite(col * cW, hdr + row * cH);
     sp.deleteSprite();
   }
+#endif // USE_LVGL_SHELL
 
   // ── keyboard mode ────────────────────────────────────────────────────────────
 
@@ -397,6 +529,7 @@ private:
       Uni.update();
       UartFM.poll(); // read remote input so nav works in this dialog
       if (Mirror.dirty()) Mirror.pump(); // flush only when this overlay redrew
+      LvglUi::pump();
 
       if (millis() - lastBlink >= BLINK_MS) {
         cursorOn  = !cursorOn;

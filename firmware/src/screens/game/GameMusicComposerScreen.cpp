@@ -204,6 +204,9 @@ void GameMusicComposerScreen::onItemSelected(uint8_t index) {
 // ── State transitions ────────────────────────────────────────────────────────
 
 void GameMusicComposerScreen::_enterMenu() {
+#ifdef USE_LVGL_SHELL
+  _scene.destroy();   // list states need the plain ListScreen body
+#endif
   _state = STATE_MENU;
   _menuItems[0] = { "New Song" };
   _menuItems[1] = { "Open Saved..." };
@@ -213,6 +216,9 @@ void GameMusicComposerScreen::_enterMenu() {
 }
 
 void GameMusicComposerScreen::_enterFiles() {
+#ifdef USE_LVGL_SHELL
+  _scene.destroy();   // list states need the plain ListScreen body
+#endif
   _state = STATE_FILES;
   if (_filesDir.length() == 0) _filesDir = kMusicDir;
   _browser.root = kMusicDir;
@@ -227,6 +233,9 @@ void GameMusicComposerScreen::_enterFiles() {
 }
 
 void GameMusicComposerScreen::_enterBuiltin() {
+#ifdef USE_LVGL_SHELL
+  _scene.destroy();   // list states need the plain ListScreen body
+#endif
   _state = STATE_BUILTIN;
   uint8_t n = kBuiltinCount;
   if (n > sizeof(_builtinItems) / sizeof(_builtinItems[0]))
@@ -452,12 +461,18 @@ void GameMusicComposerScreen::_renderEditor() {
   if (!_dirty) return;
   _dirty = false;
 
-  auto& lcd = Uni.Lcd;
   int x = bodyX(), y = bodyY(), w = bodyW(), h = bodyH();
   uint16_t theme = Config.getThemeColor();
 
+#ifdef USE_LVGL_SHELL
+  if (!_scene.ensure(Uni.Lcd, bodyW(), bodyH())) return;
+  Sprite& sp = _scene.sprite();
+#else
+  auto& lcd = Uni.Lcd;
   Sprite sp(&lcd);
   sp.createSprite(w, h);
+#endif
+
   sp.fillSprite(TFT_BLACK);
   sp.setTextSize(1);
 
@@ -537,13 +552,26 @@ void GameMusicComposerScreen::_renderEditor() {
     sp.drawString("[Up/Dn] Pitch  [Press] Menu", w / 2, h - 1);
   }
 
+#ifdef USE_LVGL_SHELL
+  _scene.flush();
+#else
   sp.pushSprite(x, y);
   sp.deleteSprite();
+#endif
 }
 
 // ── Playback rendering ───────────────────────────────────────────────────────
 
 void GameMusicComposerScreen::_renderPlayback() {
+#ifdef USE_LVGL_SHELL
+  if (!_scene.ensure(Uni.Lcd, bodyW(), bodyH())) return;
+  Sprite& sp = _scene.sprite();
+  int x = 0, y = 0, w = bodyW(), h = bodyH();
+  uint16_t theme = Config.getThemeColor();
+
+  sp.fillSprite(TFT_BLACK);
+  sp.setTextSize(1);
+#else
   auto& lcd = Uni.Lcd;
   int x = bodyX(), y = bodyY(), w = bodyW(), h = bodyH();
   uint16_t theme = Config.getThemeColor();
@@ -552,6 +580,7 @@ void GameMusicComposerScreen::_renderPlayback() {
   sp.createSprite(w, h);
   sp.fillSprite(TFT_BLACK);
   sp.setTextSize(1);
+#endif
 
   sp.setTextDatum(TL_DATUM);
   sp.setTextColor(TFT_YELLOW);
@@ -591,8 +620,12 @@ void GameMusicComposerScreen::_renderPlayback() {
   sp.setTextDatum(BC_DATUM);
   sp.drawString("Any button to stop", w / 2, h - 1);
 
+#ifdef USE_LVGL_SHELL
+  _scene.flush();
+#else
   sp.pushSprite(x, y);
   sp.deleteSprite();
+#endif
 }
 
 // ── RTTTL parse / serialize ──────────────────────────────────────────────────

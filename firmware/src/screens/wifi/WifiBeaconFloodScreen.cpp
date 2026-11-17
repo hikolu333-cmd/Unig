@@ -5,6 +5,7 @@
 #include "core/AchievementManager.h"
 #include "screens/wifi/WifiMenuScreen.h"
 #include "ui/actions/ShowStatusAction.h"
+#include "ui/components/TempBadge.h"
 #include "utils/network/WifiAttackUtil.h"
 #include <WiFi.h>
 
@@ -31,6 +32,9 @@ static constexpr const char* kSsids[] = {
 };
 static constexpr int kSsidCount = (int)(sizeof(kSsids) / sizeof(kSsids[0]));
 
+// Beacon pool-size choices; 0 = Endless (cycle the whole list, as before).
+static constexpr int kCountChoices[] = {10, 20, 50, 100, 150, 200, 0};
+
 // ── Destructor ────────────────────────────────────────────────────────────────
 
 WifiBeaconFloodScreen::~WifiBeaconFloodScreen()
@@ -49,27 +53,46 @@ void WifiBeaconFloodScreen::onInit()
 
   _modeSub   = "Spam";
   _targetSub = "Built In";
+  _countSub  = "Endless";
   _menuItems[0] = {"Mode",   _modeSub.c_str()};
   _menuItems[1] = {"Target", _targetSub.c_str()};
-  _menuItems[2] = {"Start",  nullptr};
-  setItems(_menuItems, 3);
+  _menuItems[2] = {"Count",  _countSub.c_str()};
+  _menuItems[3] = {"Start",  nullptr};
+  setItems(_menuItems, 4);
 }
 
 void WifiBeaconFloodScreen::onItemSelected(uint8_t index)
 {
   if (_state == STATE_MENU) {
-    if (index == 0) {
-      _mode = (_mode == MODE_SPAM) ? MODE_FLOOD : MODE_SPAM;
-      _updateMenuValues();
-    } else if (index == 1) {
-      if (_mode == MODE_SPAM) {
+    if (_mode == MODE_SPAM) {
+      // rows: [0] Mode  [1] Target  [2] Count  [3] Start
+      if (index == 0) {
+        _mode = MODE_FLOOD;
+        _updateMenuValues();
+      } else if (index == 1) {
         _showFilePicker();          // pick Built In or a .txt file
+      } else if (index == 2) {
+        _showCountPicker();
       } else {
-        _startScan();
+        _startAttack();
       }
-    } else if (index == 2) {
-      _startAttack();
+    } else {
+      // rows: [0] Mode  [1] Target  [2] Start
+      if (index == 0) {
+        _mode = MODE_SPAM;
+        _updateMenuValues();
+      } else if (index == 1) {
+        _startScan();
+      } else {
+        _startAttack();
+      }
     }
+    return;
+  }
+
+  if (_state == STATE_COUNT) {
+    if (index < (uint8_t)kCountChoiceCount) _countIdx = index;
+    _showMenu();
     return;
   }
 
@@ -83,9 +106,7 @@ void WifiBeaconFloodScreen::onItemSelected(uint8_t index)
     if (apIndex >= 0 && apIndex < _apCount) {
       _floodTarget = apIndex;
     }
-    _state = STATE_MENU;
-    setItems(_menuItems, 3);
-    _updateMenuValues();
+    _showMenu();
     return;
   }
 
@@ -95,9 +116,7 @@ void WifiBeaconFloodScreen::onItemSelected(uint8_t index)
     uint8_t baseOffset = (_pickerDir == DICT_DIR) ? 1 : 0;
     if (baseOffset && index == 0) {
       _spamTarget = SPAM_BUILTIN;
-      _state = STATE_MENU;
-      setItems(_menuItems, 3);
-      _updateMenuValues();
+      _showMenu();
       return;
     }
 
@@ -114,9 +133,7 @@ void WifiBeaconFloodScreen::onItemSelected(uint8_t index)
       _fileLabel  = e.name;
       _spamTarget = SPAM_FILE;
     }
-    _state = STATE_MENU;
-    setItems(_menuItems, 3);
-    _updateMenuValues();
+    _showMenu();
     return;
   }
 }
@@ -132,10 +149,11 @@ void WifiBeaconFloodScreen::onUpdate()
     }
 
     if (_mode == MODE_SPAM) {
-      // Rate-limit to ~125 SSIDs/sec — enough for fast phone scans without
-      // cooking the radio (each call = 3 beacon frames + 3 ms internal delay).
+      // Rate-limit to ~250 SSIDs/sec (internal 3×1 ms TX delays dominate the
+      // real cost). A 150-network pool cycles in ~600 ms — every fake network
+      // beacons about twice a second, comfortably inside phone scan caches.
       uint32_t now = millis();
-      if (now - _lastSendMs >= 8) {
+      if (now - _lastSendMs >= 4) {
         _lastSendMs = now;
         _broadcastNext();
       }
@@ -194,9 +212,7 @@ void WifiBeaconFloodScreen::onBack()
     // Clamp at DICT_DIR — never climb above /unigeek/wifi/beacon_dicts.
     if (_pickerDir == DICT_DIR || _pickerDir.length() == 0) {
       _pickerDir = "";
-      _state = STATE_MENU;
-      setItems(_menuItems, 3);
-      _updateMenuValues();
+      _showMenu();
       return;
     }
     int slash = _pickerDir.lastIndexOf('/');
@@ -204,10 +220,8 @@ void WifiBeaconFloodScreen::onBack()
     _showFilePicker();
     return;
   }
-  if (_state == STATE_SELECT_AP) {
-    _state = STATE_MENU;
-    setItems(_menuItems, 3);
-    _updateMenuValues();
+  if (_state == STATE_SELECT_AP || _state == STATE_COUNT) {
+    _showMenu();
     return;
   }
   Screen.goBack();
@@ -225,6 +239,10 @@ void WifiBeaconFloodScreen::_updateMenuValues()
     } else {
       _targetSub = "Built In";
     }
+    char cnt[16];
+    if (kCountChoices[_countIdx] == 0) snprintf(cnt, sizeof(cnt), "Endless");
+    else snprintf(cnt, sizeof(cnt), "%d networks", kCountChoices[_countIdx]);
+    _countSub = cnt;
   } else {
     _targetSub = (_floodTarget >= 0 && _floodTarget < _apCount)
                  ? _apList[_floodTarget].ssid
@@ -237,12 +255,40 @@ void WifiBeaconFloodScreen::_updateMenuValues()
             : needFile   ? "File not selected"
                          : "";
 
-  // Always 3 rows: [Mode, Target, Start]. In-place sublabel update preserves
-  // _selectedIndex so toggling Mode/Target doesn't bounce the highlight.
+  // Sublabels are mutated in place (no setItems) so the highlight stays on
+  // the row being toggled. Spam shows [Mode, Target, Count, Start]; Flood
+  // reuses rows 0-1 and maps Start onto row 2 — the label swaps with it.
   _menuItems[0].sublabel = _modeSub.c_str();
   _menuItems[1].sublabel = _targetSub.c_str();
-  _menuItems[2].sublabel = (needTarget || needFile) ? _startSub.c_str() : nullptr;
+  if (_mode == MODE_SPAM) {
+    _menuItems[2].label    = "Count";
+    _menuItems[2].sublabel = _countSub.c_str();
+    _menuItems[3].sublabel = (needTarget || needFile) ? _startSub.c_str() : nullptr;
+  } else {
+    _menuItems[2].label    = "Start";
+    _menuItems[2].sublabel = (needTarget || needFile) ? _startSub.c_str() : nullptr;
+  }
   render();
+}
+
+void WifiBeaconFloodScreen::_showMenu()
+{
+  _state = STATE_MENU;
+  setItems(_menuItems, (_mode == MODE_SPAM) ? 4 : 3);
+  _updateMenuValues();
+}
+
+void WifiBeaconFloodScreen::_showCountPicker()
+{
+  static constexpr const char* labels[kCountChoiceCount] = {
+    "10 networks", "20 networks", "50 networks",
+    "100 networks", "150 networks", "200 networks", "Endless"
+  };
+  for (int i = 0; i < kCountChoiceCount; i++) {
+    _countItems[i] = { labels[i], (i == _countIdx) ? "(current)" : nullptr };
+  }
+  _state = STATE_COUNT;
+  setItems(_countItems, (uint8_t)kCountChoiceCount);
 }
 
 void WifiBeaconFloodScreen::_showScanResults()
@@ -326,6 +372,11 @@ void WifiBeaconFloodScreen::_startAttack()
   _lastSendMs   = 0;
   _chromeDrawn  = false;
 
+  // One BSSID base per attack run — each pool slot gets a stable derived MAC,
+  // so networks persist in the victim's scan list instead of churning.
+  for (int j = 0; j < 6; j++) _macBase[j] = (uint8_t)random(0, 256);
+  _macBase[0] = (_macBase[0] & 0xFE) | 0x02;   // local + unicast
+
   if (_mode == MODE_SPAM && _spamTarget == SPAM_FILE && _fileSsidCount == 0) {
     // No file loaded — refuse to start.
     return;
@@ -342,32 +393,53 @@ void WifiBeaconFloodScreen::_stop()
   _rounds      = 0;
   _sentThisSec = 0;
   _ratePerSec  = 0;
-  setItems(_menuItems, 3);   // restore menu list after attacking
-  _updateMenuValues();
+  _showMenu();               // restore menu list after attacking
+}
+
+const char* WifiBeaconFloodScreen::_poolSsid(int idx)
+{
+  if (idx < kSsidCount) return kSsids[idx];
+  // Beyond the built-in list: numbered variants keep every pool slot unique,
+  // so selecting 150/200 networks actually yields that many distinct names.
+  snprintf(_genSsidBuf, sizeof(_genSsidBuf), "%.26s %03d",
+           kSsids[idx % kSsidCount], idx);
+  return _genSsidBuf;
 }
 
 void WifiBeaconFloodScreen::_broadcastNext()
 {
-  const char* ssid;
-  uint8_t     channel;
-
   // Phones predominantly scan the 2.4 GHz non-overlapping triplet 1/6/11;
   // spreading SSIDs evenly across these maximises visibility regardless of
   // country code (ch 12-13 are blocked in US locale).
   static const uint8_t kHotChannels[] = {1, 6, 11};
 
-  if (_spamTarget == SPAM_FILE) {
-    if (_fileSsidCount == 0) return;
-    channel = kHotChannels[_ssidIdx % 3];
-    ssid    = _fileSsids[_ssidIdx++];
-    if (_ssidIdx >= _fileSsidCount) _ssidIdx = 0;
-  } else {
-    channel = kHotChannels[_ssidIdx % 3];
-    ssid    = kSsids[_ssidIdx++];
-    if (_ssidIdx >= kSsidCount) _ssidIdx = 0;
-  }
+  // Pool size: the chosen network count clamps the cycled list; Endless (0)
+  // keeps the previous behaviour of cycling everything. Beacons age out of
+  // scan lists fast, so the pool keeps cycling until BACK — the count limits
+  // how many distinct fake networks the victim sees, not the run length.
+  // The built-in list grows on demand via generated names; a file pool is
+  // capped by what the file actually contains.
+  const bool fromFile = (_spamTarget == SPAM_FILE);
+  int pool = fromFile ? _fileSsidCount : kSsidCount;
+  if (pool == 0) return;
+  const int limit = kCountChoices[_countIdx];
+  if (limit > 0 && pool < limit && !fromFile) pool = limit;   // generated names
+  if (limit > 0 && pool > limit) pool = limit;
+  if (_ssidIdx >= pool) _ssidIdx = 0;   // pool may have shrunk since last run
+  _poolNets = pool;
 
-  _attacker->beaconSpam(ssid, channel);
+  const uint8_t channel = kHotChannels[_ssidIdx % 3];
+  const char*   ssid    = fromFile ? _fileSsids[_ssidIdx] : _poolSsid(_ssidIdx);
+
+  // Stable per-slot BSSID: same MAC every cycle for the same network index.
+  uint8_t mac[6];
+  memcpy(mac, _macBase, 6);
+  mac[4] = (uint8_t)(_ssidIdx >> 8);
+  mac[5] = (uint8_t)_ssidIdx;
+
+  _ssidIdx = (_ssidIdx + 1 >= pool) ? 0 : _ssidIdx + 1;
+
+  _attacker->beaconSpam(ssid, channel, true, mac);
   _sentThisSec++;
   _rounds++;
   if (_rounds == 100) Achievement.unlock("wifi_beacon_spam_100");
@@ -384,7 +456,9 @@ void WifiBeaconFloodScreen::_drawAttacking()
       lcd.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
       char line[40];
       const char* tgtName = (_spamTarget == SPAM_FILE) ? "File" : "Built In";
-      snprintf(line, sizeof(line), "Spam: %s SSIDs", tgtName);
+      const int   cnt     = kCountChoices[_countIdx];
+      if (cnt == 0) snprintf(line, sizeof(line), "Spam: %s, all nets", tgtName);
+      else          snprintf(line, sizeof(line), "Spam: %s, %d nets", tgtName, cnt);
       lcd.drawString(line, bodyX() + bodyW() / 2, bodyY() + 4);
       lcd.setTextDatum(BC_DATUM);
       lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
@@ -392,20 +466,31 @@ void WifiBeaconFloodScreen::_drawAttacking()
     }
     const bool above = (_ratePerSec >= 50);
     Sprite sp(&Uni.Lcd);
-    sp.createSprite(bodyW(), 50);
+    sp.createSprite(bodyW(), 62);
     sp.fillSprite(TFT_BLACK);
     sp.setTextDatum(MC_DATUM);
     char rateBuf[24];
     snprintf(rateBuf, sizeof(rateBuf), "Rate: %d / s", _ratePerSec);
     sp.setTextSize(2);
     sp.setTextColor(above ? TFT_GREEN : TFT_WHITE, TFT_BLACK);
-    sp.drawString(rateBuf, bodyW() / 2, 14);
+    sp.drawString(rateBuf, bodyW() / 2, 12);
     sp.setTextSize(1);
+    // Distinct networks already on air: the pool cycles sequentially, so the
+    // unique count is rounds clamped by the pool size.
+    const int unique = (_poolNets > 0 && _rounds < _poolNets) ? _rounds : _poolNets;
+    char netBuf[24];
+    if (kCountChoices[_countIdx] == 0)
+      snprintf(netBuf, sizeof(netBuf), "Nets: %d", unique);
+    else
+      snprintf(netBuf, sizeof(netBuf), "Nets: %d / %d", unique, kCountChoices[_countIdx]);
+    sp.setTextColor(TFT_CYAN, TFT_BLACK);
+    sp.drawString(netBuf, bodyW() / 2, 34);
     sp.setTextColor(above ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
     sp.drawString(above ? "DETECTOR TRIPPED  (>= 50/s)" : "below threshold  (< 50/s)",
-                  bodyW() / 2, 36);
-    sp.pushSprite(bodyX(), bodyY() + bodyH() / 2 - 25);
+                  bodyW() / 2, 50);
+    sp.pushSprite(bodyX(), bodyY() + bodyH() / 2 - 31);
     sp.deleteSprite();
+    TempBadge::drawTft();
 
   } else {
     if (!_chromeDrawn) {
@@ -441,6 +526,7 @@ void WifiBeaconFloodScreen::_drawAttacking()
                   bodyW() / 2, 36);
     sp.pushSprite(bodyX(), bodyY() + bodyH() / 2 - 25);
     sp.deleteSprite();
+    TempBadge::drawTft();
   }
 }
 

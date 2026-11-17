@@ -24,30 +24,11 @@ public:
 
 #ifdef USE_LVGL_SHELL
 public:
-  ~ListScreen() override { _lvTeardown(); }
-
-  // LVGL mode: no legacy fillScreen(TFT_BLACK) here — the page root is an
+  // LVGL mode: chrome, page root, timer pump and teardown all come from
+  // BaseScreen — this template only adds the row list + focus management.
+  // No legacy fillScreen(TFT_BLACK) on init either: the page root is an
   // opaque full-screen object, so LVGL paints the new page straight over the
-  // previous one. The black wipe added a jarring full-black frame between
-  // pages on the slow SPI bus.
-  void init() override { onInit(); render(); }
-
-  // LVGL mode: the page is a widget tree — no per-loop sprite/chrome
-  // drawing. update() only feeds events + pumps LVGL timers; render()
-  // (called on setItems / display wake) syncs the tree and paints.
-  void render() override {
-    if (Uni.lcdOff) return;
-    onRender();
-  }
-  void update() override {
-    onUpdate();
-    if (!Uni.lcdOff && _lvRoot) lv_timer_handler();
-  }
-  // Returning from a legacy (non-LVGL) leaf screen: the panel was drawn over
-  // directly — invalidate our page so LVGL repaints it.
-  void onRestore() override {
-    if (_lvRoot) lv_obj_invalidate(_lvRoot);
-  }
+  // previous one (the black wipe read as a flicker on the slow SPI bus).
 #endif
 
   template <size_t N>
@@ -474,8 +455,9 @@ private:
 
 #ifdef USE_LVGL_SHELL
   // ── LVGL page: title header + scrolling flex-column of row buttons ──────
+  // Page root (_lvRoot) is owned by BaseScreen and exists from init() on,
+  // even when a subclass overrides onRender to draw its own views instead.
 private:
-  lv_obj_t* _lvRoot        = nullptr;
   lv_obj_t* _lvList        = nullptr;
   int       _lvPrevSel     = -1;
   bool      _lvNeedRebuild = false;
@@ -486,25 +468,13 @@ private:
                          (uint8_t)((c & 0x1F) * 255 / 31));
   }
 
-  void _lvTeardown() {
-    if (_lvRoot) {
-      lv_obj_del(_lvRoot);      // invalidates the covered area → repaint below
-      _lvRoot = nullptr;
-      _lvList = nullptr;
-    }
-    _lvPrevSel     = -1;
-    _lvNeedRebuild = true;
-  }
-
-  void _lvBuild() {
-    LvglUi::ensure();
-    _lvRoot = LvglUi::pageRoot(title());
-    _lvList = LvglUi::makeList(_lvRoot);
-    _lvNeedRebuild = true;
-  }
-
   void _lvRender() {
-    if (!_lvRoot) _lvBuild();
+    if (!_lvRoot) return;                    // built by BaseScreen::init()
+    if (!_lvList) {
+      _lvList = LvglUi::makeList(_lvRoot);
+      _lvNeedRebuild = true;
+    }
+    LvglUi::viewParentHide();                // list takes the body back from views
     if (_lvNeedRebuild) { _lvPopulateRows(); _lvNeedRebuild = false; }
     else _lvRefreshRows();
     _lvApplyFocus();

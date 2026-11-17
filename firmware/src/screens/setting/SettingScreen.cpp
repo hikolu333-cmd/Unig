@@ -240,7 +240,7 @@ void SettingScreen::onItemSelected(uint8_t index) {
 
     case SETT_MASCOT: {
       // Built straight from the Mascot registry, so a new mascot needs no edit here.
-      InputSelectAction::Option opts[8];
+      InputSelectAction::Option opts[8] = {};
       uint8_t n = Mascot::count();
       if (n > 8) n = 8;
       for (uint8_t i = 0; i < n; i++) {

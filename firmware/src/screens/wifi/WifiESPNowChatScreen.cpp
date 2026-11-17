@@ -85,8 +85,59 @@ void WifiESPNowChatScreen::onUpdate()
 void WifiESPNowChatScreen::onRender()
 {
   const uint16_t themeColor = Config.getThemeColor();
+  const int      FOOTER_H   = 14;
+
+#ifdef USE_LVGL_SHELL
+  if (!_cont) {
+    lv_obj_t* root = LvglUi::viewParent();
+
+    _cont = lv_obj_create(root);
+    lv_obj_set_pos(_cont, 0, 0);
+    lv_obj_set_size(_cont, bodyW(), bodyH() - FOOTER_H);
+    lv_obj_set_style_bg_opa(_cont, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_cont, 0, 0);
+    lv_obj_set_style_pad_all(_cont, 0, 0);
+    lv_obj_set_style_pad_row(_cont, 0, 0);
+    lv_obj_set_flex_flow(_cont, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scrollbar_mode(_cont, LV_SCROLLBAR_MODE_OFF);
+
+    _lblFooter = lv_label_create(root);
+    lv_obj_set_style_text_font(_lblFooter, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_lblFooter, LvglUi::c565(TFT_DARKGREY), 0);
+    lv_obj_align(_lblFooter, LV_ALIGN_BOTTOM_MID, 0, -2);
+    lv_label_set_text(_lblFooter, "[Press] Msg");
+  }
+
+  // Rebuild the message column (≤20 lines — cheap, same pattern as LogView).
+  lv_obj_clean(_cont);
+  portENTER_CRITICAL(&_lock);
+  for (int i = 0; i < _msgCount; i++) {
+    const Entry& e = _messages[i];
+
+    char name[15] = {};
+    strncpy(name, e.msg.name, 14);
+    char text[225] = {};
+    strncpy(text, e.msg.text, 224);
+    char line[64];
+    snprintf(line, sizeof(line), "[%s] %s", name, text);
+
+    // Sent messages use theme color, received use white
+    bool sent = (e.sender[0] == 0xFF && e.sender[1] == 0xFF &&
+                 e.sender[2] == 0xFF && e.sender[3] == 0xFF &&
+                 e.sender[4] == 0xFF && e.sender[5] == 0xFF);
+    lv_obj_t* l = lv_label_create(_cont);
+    lv_obj_set_width(l, lv_pct(100));
+    lv_obj_set_style_text_font(l, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(l, sent ? LvglUi::c565(themeColor) : lv_color_white(), 0);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    lv_label_set_text(l, line);
+  }
+  portEXIT_CRITICAL(&_lock);
+
+  // Newest at the bottom: scroll to the end of the column.
+  lv_obj_scroll_to_y(_cont, LV_COORD_MAX, LV_ANIM_OFF);
+#else
   const int      LINE_H     = 9;
-  const int      FOOTER_H   = 12;
 
   auto& lcd = Uni.Lcd;
   lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
@@ -124,6 +175,7 @@ void WifiESPNowChatScreen::onRender()
     y -= LINE_H;
   }
   portEXIT_CRITICAL(&_lock);
+#endif
 }
 
 // ── ESP-NOW callbacks ──────────────────────────────────────────────────────

@@ -129,6 +129,10 @@
     using TFT_eSprite::pushSprite;
     void pushSprite(int32_t x, int32_t y);
     void pushSprite(int32_t x, int32_t y, uint16_t transparent);
+    // Raw pixel access for the LVGL bridge (LogView status bar): the buffer
+    // holds native little-endian RGB565; byte-swap when copying to lv_color_t
+    // storage (LV_COLOR_16_SWAP builds). Null when no sprite is created.
+    const uint16_t* pixels() const { return _img; }
   };
   using Sprite = CaptureSprite;
 #endif

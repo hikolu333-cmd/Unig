@@ -565,7 +565,7 @@ void SubGHzScreen::_recordRawFinish() {
 // Protocol picker — highlights the current selection; sets _bruteSel.
 void SubGHzScreen::_pickBruteProto() {
   static const char* idxVal[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"};
-  InputSelectAction::Option opts[kBruteProtoCount];
+  InputSelectAction::Option opts[kBruteProtoCount] = {};
   for (uint8_t i = 0; i < kBruteProtoCount; i++) {
     opts[i].label = kBruteProtos[i].label;
     opts[i].value = idxVal[i];

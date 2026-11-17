@@ -4336,7 +4336,7 @@ void PN532I2cScreen::_doUltralightWriteTag() {
       BrowseFileView::Mode(BrowseFileView::Mode::FILE_ONLY, ".bin", 540));
   if (!n) { ShowStatusAction::show("No NTAG215 .bin"); _goUltralightTag(); return; }
   const uint8_t count = min((uint8_t)10, n);
-  InputSelectAction::Option opts[10];
+  InputSelectAction::Option opts[10] = {};
   String vals[10];
   for (uint8_t i = 0; i < count; ++i) {
     vals[i] = String(i);

@@ -20,8 +20,12 @@ void ChameleonLFScanScreen::_addRow(const char* label, const String& value) {
 
 void ChameleonLFScanScreen::_draw() {
   _needsDraw = false;
-  auto& lcd = Uni.Lcd;
+#ifdef USE_LVGL_SHELL
+  TagPrompt::show("Waiting for tag...", bodyX(), bodyY(), bodyW(), bodyH(),
+                  "[Press] Continue");
+#else
   int bx = bodyX(), by = bodyY(), bw = bodyW(), bh = bodyH();
+  auto& lcd = Uni.Lcd;
   Sprite sp(&lcd);
   sp.createSprite(bw, bh);
   sp.fillSprite(TFT_BLACK);
@@ -32,6 +36,7 @@ void ChameleonLFScanScreen::_draw() {
   sp.drawString("[Press] Continue", bw / 2, bh / 2 + 10);
   sp.pushSprite(bx, by);
   sp.deleteSprite();
+#endif
 }
 
 void ChameleonLFScanScreen::_buildResult() {
@@ -55,6 +60,9 @@ void ChameleonLFScanScreen::_buildResult() {
 
 void ChameleonLFScanScreen::_doScan() {
   _scanning = true;
+#ifdef USE_LVGL_SHELL
+  TagPrompt::show("Reading tag...", bodyX(), bodyY(), bodyW(), bodyH());
+#else
   auto& lcd = Uni.Lcd;
   int bx = bodyX(), by = bodyY(), bw = bodyW(), bh = bodyH();
   lcd.fillRect(bx, by, bw, bh, TFT_BLACK);
@@ -62,6 +70,7 @@ void ChameleonLFScanScreen::_doScan() {
   lcd.setTextSize(1);
   lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
   lcd.drawString("Reading tag...", bx + bw / 2, by + bh / 2);
+#endif
 
   auto& c = ChameleonClient::get();
   uint8_t previousMode = 0;
@@ -112,7 +121,9 @@ void ChameleonLFScanScreen::onInit() {
 void ChameleonLFScanScreen::onRender() {
   if (_state == STATE_RESULT) {
     _scrollView.render(bodyX(), bodyY(), bodyW(), bodyH());
+#ifndef USE_LVGL_SHELL
     StatusBar::refresh();
+#endif
     return;
   }
   if (_needsDraw) _draw();

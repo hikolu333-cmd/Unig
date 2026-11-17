@@ -36,6 +36,11 @@ namespace ScreenProto {
   static constexpr uint8_t CAP_KEYBOARD = 0x02;
   static constexpr uint8_t T_FRAME = 0xA1; // [x:2][y:2][w:2][h:2][rgb565…]
   static constexpr uint8_t T_FILL  = 0xA2; // [x:2][y:2][w:2][h:2][color:2] (no-PSRAM region mode)
+  // Same rect header as T_FRAME, then run-length pairs [color:2 wire-BE][run:2 LE]
+  // of raw wire pixels. Emitted only when actually shorter than the raw frame —
+  // LVGL UI content (fills, text on flat backgrounds) compresses 10–50x, which
+  // uncorks the ~64 KB/s CDC drain ceiling for full-screen updates.
+  static constexpr uint8_t T_FRAME_RLE = 0xA3;
 }
 
 class ScreenMirror {

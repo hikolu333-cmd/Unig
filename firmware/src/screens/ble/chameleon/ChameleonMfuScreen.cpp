@@ -55,6 +55,9 @@ void ChameleonMfuScreen::_freeDump() {
 
 void ChameleonMfuScreen::_drawIdle() {
   _needsDraw = false;
+#ifdef USE_LVGL_SHELL
+  TagPrompt::show("Waiting for tag...", bodyX(), bodyY(), bodyW(), bodyH());
+#else
   render();
   auto& lcd = Uni.Lcd;
   int bx = bodyX(), by = bodyY(), bw = bodyW(), bh = bodyH();
@@ -67,6 +70,7 @@ void ChameleonMfuScreen::_drawIdle() {
   TagPrompt::show("Waiting for tag...", bodyX(), bodyY(), bodyW(), bodyH(), title());
   sp.pushSprite(bx, by);
   sp.deleteSprite();
+#endif
 }
 
 void ChameleonMfuScreen::_buildResult() {
@@ -209,12 +213,16 @@ void ChameleonMfuScreen::_read() {
   _busy = true;
   _freeDump();
 
+#ifdef USE_LVGL_SHELL
+  TagPrompt::show("Waiting for tag...", bodyX(), bodyY(), bodyW(), bodyH());
+#else
   auto& lcd = Uni.Lcd;
   int bx = bodyX(), by = bodyY(), bw = bodyW(), bh = bodyH();
   lcd.fillRect(bx, by, bw, bh, TFT_BLACK);
   lcd.setTextDatum(MC_DATUM);
   lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
   TagPrompt::show("Waiting for tag...", bx, by, bw, bh, title());
+#endif
 
   auto& c = ChameleonClient::get();
   c.setMode(1);

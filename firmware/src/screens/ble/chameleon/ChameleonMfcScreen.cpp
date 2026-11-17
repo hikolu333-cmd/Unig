@@ -1005,7 +1005,7 @@ void ChameleonMfcScreen::_loadDumpToSlot() {
   if (!_dump || !_dumpLen) return;
   const uint16_t tagType = _sectors == 5 ? 1000 : (_sectors == 40 ? 1003 : 1001);
 
-  InputSelectAction::Option opts[8];
+  InputSelectAction::Option opts[8] = {};
   String labels[8], vals[8];
   for (uint8_t i = 0; i < 8; ++i) {
     labels[i] = String("Slot ") + (i + 1);

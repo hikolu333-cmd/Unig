@@ -209,8 +209,13 @@ void ClaudeBuddyScreen::onRender() {
   xSemaphoreGive(_stMutex);
 
   uint16_t bw = bodyW(), bh = bodyH();
+#ifdef USE_LVGL_SHELL
+  if (!_scene.ensure(Uni.Lcd, bw, bh)) return;
+  Sprite& sp = _scene.sprite();
+#else
   Sprite sp(&Uni.Lcd);
   sp.createSprite(bw, bh);
+#endif
   sp.fillSprite(TFT_BLACK);
   sp.setTextSize(1);
 
@@ -379,8 +384,12 @@ void ClaudeBuddyScreen::onRender() {
   sp.setCursor(bw - 72, fy + 2);
 #endif
 
+#ifdef USE_LVGL_SHELL
+  _scene.flush();
+#else
   sp.pushSprite(bodyX(), bodyY());
   sp.deleteSprite();
+#endif
 }
 
 // ── BLE polling ───────────────────────────────────────────────────────────────

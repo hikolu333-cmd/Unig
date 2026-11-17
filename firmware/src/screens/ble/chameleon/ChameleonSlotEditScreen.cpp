@@ -855,7 +855,7 @@ void ChameleonSlotEditScreen::_writeContent() {
   }
 
   const uint8_t count = (n < kMax) ? n : kMax;
-  InputSelectAction::Option opts[kMax];
+  InputSelectAction::Option opts[kMax] = {};
   String vals[kMax];
   for (uint8_t i = 0; i < count; ++i) {
     vals[i] = String(i);

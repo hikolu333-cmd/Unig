@@ -100,7 +100,7 @@ void WifiRogueAPScreen::onItemSelected(uint8_t index) {
         }
         static constexpr uint8_t kMaxOpts = 10;
         uint8_t optCount = (n < kMaxOpts) ? n : kMaxOpts;
-        InputSelectAction::Option opts[kMaxOpts];
+        InputSelectAction::Option opts[kMaxOpts] = {};
         for (uint8_t i = 0; i < optCount; i++)
           opts[i] = {_browser.entry(i).name.c_str(), _browser.entry(i).name.c_str()};
         const char* selected = InputSelectAction::popup("Portal", opts, optCount);

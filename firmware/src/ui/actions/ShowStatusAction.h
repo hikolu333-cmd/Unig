@@ -7,6 +7,7 @@
 #include "core/Device.h"
 #include "core/ScreenManager.h"
 #include "utils/uart/UartFileManager.h"
+#include "ui/lvgl/LvglUi.h"   // LvglUi::pump() is a no-op without USE_LVGL_SHELL
 
 class ShowStatusAction
 {
@@ -30,6 +31,69 @@ private:
     : _message(message), _duration(duration)
   {}
 
+#ifdef USE_LVGL_SHELL
+  // ── LVGL mode: centered card on the top layer ────────────────────────────
+  // LVGL wraps the message text itself, so the manual word-wrap is legacy-only.
+  void _run() {
+    LvglUi::ensure();
+
+    lv_obj_t* card = lv_obj_create(lv_layer_top());
+    lv_obj_set_style_bg_color(card, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, lv_color_white(), 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, 4, 0);
+    lv_obj_set_style_pad_all(card, PAD * 2, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_OFF);
+
+    lv_obj_t* lbl = lv_label_create(card);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(lbl, Uni.Lcd.width() - 40 - PAD * 4);
+    lv_label_set_text(lbl, _message);
+
+    lv_obj_update_layout(card);
+    int textW  = lv_obj_get_width(lbl);
+    int textH  = lv_obj_get_height(lbl);
+    int w = max(textW + PAD * 4, 80);
+    int h = max(textH + PAD * 2, 40);
+    lv_obj_set_size(card, w, h);
+    lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_update_layout(card);
+    lv_timer_handler();   // paint the card once
+
+    if (_duration > 0) {
+      uint32_t until = millis() + (uint32_t)_duration;
+      while (millis() < until) { LvglUi::pump(); delay(10); }
+    } else if (_duration < 0) {
+      for (;;) {
+        Uni.update();
+        UartFM.poll(); // read remote input so nav works in this dialog
+        if (Mirror.dirty()) Mirror.pump(); // flush only when this overlay redrew
+        LvglUi::pump();
+#ifdef DEVICE_HAS_KEYBOARD
+        if (Uni.Keyboard && Uni.Keyboard->available()) {
+          Uni.Keyboard->getKey();
+          break;
+        }
+#endif
+        if (Uni.Nav->wasPressed()) {
+          Uni.Nav->readDirection();
+          break;
+        }
+        delay(10);
+      }
+    }
+    // _duration == 0: show and return immediately, no wipe
+
+    lv_obj_del(card);
+    LvglUi::repaintScreen();
+
+    if (_duration != 0 && Screen.current()) Screen.current()->render();
+  }
+#else
+  // ── Legacy TFT mode ──────────────────────────────────────────────────────
   void _wipe(int x, int y, int w, int h) {
     Uni.Lcd.fillRect(x, y, w, h, TFT_BLACK);
   }
@@ -48,7 +112,7 @@ private:
     int maxBoxW    = lcd.width() - 40;
     int maxContentW = maxBoxW - PAD * 4;
 
-    // ── word-wrap ─────────────────────────────────────────
+    // ── word-wrap ─────────────────────────────────────────────────
     String lines[MAX_LINES];
     int    lineCount = 0;
     String word      = "";
@@ -83,7 +147,7 @@ private:
     }
     lineCount++;  // index → count
 
-    // ── size overlay to content ───────────────────────────
+    // ── size overlay to content ───────────────────────────────────
     int textW = 0;
     for (int i = 0; i < lineCount; i++)
       textW = max(textW, (int)lcd.textWidth(lines[i].c_str()));
@@ -131,4 +195,5 @@ private:
 
     if (_duration != 0 && Screen.current()) Screen.current()->render();
   }
+#endif
 };

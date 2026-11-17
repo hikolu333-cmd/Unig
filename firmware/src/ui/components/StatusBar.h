@@ -37,6 +37,11 @@ public:
   }
 
   static void refresh() {
+#ifdef USE_LVGL_SHELL
+    // LVGL mode: the shell owns the status-bar column — skip the raw
+    // sprite push so it can't scribble over the LVGL framebuffer.
+    return;
+#else
     StatusBar sb;
     sb.render({
       (uint8_t)Uni.Power.getBatteryPercentage(),
@@ -44,6 +49,7 @@ public:
       bleConnected(),
       Uni.Power.isCharging()
     });
+#endif
   }
 
   void render(const Status& status)

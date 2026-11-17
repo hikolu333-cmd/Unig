@@ -420,7 +420,11 @@ void ChameleonMfcWriteScreen::_write() {
   }
   _busy = false; _restoreContext();
 
+#ifdef USE_LVGL_SHELL
+  TagPrompt::clear();   // drop the progress overlay; preview/status redraw next
+#else
   Uni.Lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
+#endif
 
   if (ok && !uidWriteFailed) {
     const char* status = restoreUid ? "Tag + UID written" :

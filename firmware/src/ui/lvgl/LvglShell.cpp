@@ -18,6 +18,7 @@
 #include "utils/Mascot.h"           // Mascot registry + hackerGetRank
 #include "ui/lvgl/BoykisserImg.h"
 #include "ui/lvgl/LvglUi.h"         // shared LVGL session (driver/theme/row styles)
+#include "ui/lvgl/SpriteCanvas.h"   // pixel-art mascots drawn onto the home page
 
 // Legacy screens launched from the LVGL menu — same set as MainMenuScreen.
 #include "screens/wifi/WifiMenuScreen.h"
@@ -51,9 +52,13 @@ lv_obj_t* s_menu       = nullptr;
 lv_obj_t* s_agentLbl    = nullptr;
 lv_obj_t* s_rankLbl     = nullptr;
 lv_obj_t* s_expLbl      = nullptr;
+lv_obj_t* s_tempLbl     = nullptr;   // chip temperature, top-right under EXP
 lv_obj_t* s_expBar      = nullptr;
 lv_obj_t* s_mascot      = nullptr;   // lv_img (boykisser) or fallback badge
-lv_obj_t* s_mascotAlt   = nullptr;   // fallback badge for non-photo mascots
+SpriteCanvas s_mascotCanvas;         // pixel-art mascots (hacker/cat/robot)
+bool     s_mascotBlink = false;      // canvas mascots blink via redraw
+int      s_mascotCvX   = 0;          // canvas base X (sway moves it around this)
+char     s_mascotId[16] = "";        // rendered mascot id (re-apply on change)
 lv_obj_t* s_bubblePanel = nullptr;
 lv_obj_t* s_bubbleLbl   = nullptr;
 lv_obj_t* s_hpLbl       = nullptr;
@@ -138,20 +143,84 @@ void _refreshInfo() {
   lv_bar_set_value(s_brBar, brain, LV_ANIM_OFF);
   snprintf(buf, sizeof(buf), "BR %d%%", brain);
   lv_label_set_text(s_brLbl, buf);
+
+  // Chip temperature — colour-graded (normal / hot / critical).
+  if (s_tempLbl) {
+    const float t = temperatureRead();
+    if (isnan(t)) {
+      lv_label_set_text(s_tempLbl, "--°C");
+    } else {
+      snprintf(buf, sizeof(buf), "%d°C", (int)(t + 0.5f));
+      lv_label_set_text(s_tempLbl, buf);
+      uint16_t col = (t >= 80.0f) ? TFT_RED
+                   : (t >= 65.0f) ? TFT_ORANGE
+                                  : TFT_DARKGREY;
+      lv_obj_set_style_text_color(s_tempLbl, _c565(col), 0);
+    }
+  }
 }
 
 void _infoTimer(lv_timer_t*)  { _refreshInfo(); }
 
+// ── mascot rendering ──────────────────────────────────────────────────────────
+// Pixel-art mascots (hacker/cat/robot) draw into a SpriteCanvas on the home
+// page; the photo mascot (boykisser) stays an lv_img. Both blink, and the art
+// scales into an 80×102 box at (12, 62).
+void _renderMascot() {
+  const Mascot&  m  = Mascot::current();
+  const RankInfo ri = hackerGetRank(Achievement.getExp());
+  constexpr int kBoxW = 80, kBoxH = 102;
+  const int px = (m.w > 0) ? kBoxW / m.w : 6;
+  const int py = (m.h > 0) ? kBoxH / m.h : 6;
+  const int ps = (px < py) ? px : py;
+  const int w  = m.w * ps, h = m.h * ps;
+  if (!s_mascotCanvas.ensure(Uni.Lcd, s_home, w, h)) return;
+  s_mascotCvX = s_mascotX + (kBoxW - w) / 2;
+  s_mascotCanvas.setPos(s_mascotCvX, 62 + (kBoxH - h) / 2);
+  Sprite& dc = s_mascotCanvas.sprite();
+  dc.fillSprite(TFT_BLACK);
+  m.draw(dc, 0, 0, ps, s_mascotBlink, ri.rank);
+  s_mascotCanvas.flush();
+}
+
+// Apply the mascot selected in Settings. Called on UI build and on restore
+// (back from Settings) — cheap when the choice didn't change.
+void _applyMascot() {
+  if (!s_mascot || !s_home) return;   // UI not built yet
+  const Mascot& m = Mascot::current();
+  if (strcmp(m.id, s_mascotId) == 0) return;   // unchanged
+  strlcpy(s_mascotId, m.id, sizeof(s_mascotId));
+  if (strcmp(m.id, "boykisser") == 0) {
+    s_mascotCanvas.destroy();
+    lv_obj_clear_flag(s_mascot, LV_OBJ_FLAG_HIDDEN);
+    lv_img_set_src(s_mascot, &s_imgOpen);
+  } else {
+    lv_obj_add_flag(s_mascot, LV_OBJ_FLAG_HIDDEN);
+    s_mascotBlink = false;
+    _renderMascot();
+  }
+}
+
 void _blinkTimer(lv_timer_t*) {
   static uint16_t tick = 0;
-  if (tick == 24)      lv_img_set_src(s_mascot, &s_imgClosed);
-  else if (tick >= 25) { lv_img_set_src(s_mascot, &s_imgOpen); tick = 0; return; }
+  const bool photo = (strcmp(s_mascotId, "boykisser") == 0);
+  // Eye-close at tick 24, reopen past 25 (~4 s cadence at 150 ms per tick).
+  if (tick == 24) {
+    if (photo) lv_img_set_src(s_mascot, &s_imgClosed);
+    else { s_mascotBlink = true; _renderMascot(); }
+  } else if (tick >= 25) {
+    if (photo) lv_img_set_src(s_mascot, &s_imgOpen);
+    else { s_mascotBlink = false; _renderMascot(); }
+    tick = 0;
+    return;
+  }
   tick++;
 }
 
 void _swayExec(void* var, int32_t v) {
   (void)var;
   lv_obj_set_x(s_mascot, s_mascotX + kSway[v] * 2);
+  if (s_mascotCanvas.obj()) lv_obj_set_x(s_mascotCanvas.obj(), s_mascotCvX + kSway[v] * 2);
 }
 
 void _bubbleTimer(lv_timer_t*) {
@@ -262,27 +331,20 @@ void LvglShellScreen::_ensureUi() {
   lv_obj_set_style_text_font(s_expLbl, &lv_font_montserrat_14, 0);
   lv_label_set_text(s_expLbl, "EXP 0");
 
-  // mascot (photo if boykisser selected, badge otherwise)
-  const Mascot& mascot = Mascot::current();
+  // Chip temperature — internal ESP32-S3 sensor, refreshed with the info
+  // timer (5 s cadence; temperatureRead() reconfigures the sensor each call).
+  s_tempLbl = lv_label_create(s_home);
+  lv_obj_set_pos(s_tempLbl, 218, 62);
+  lv_obj_set_style_text_font(s_tempLbl, &lv_font_montserrat_14, 0);
+  lv_label_set_text(s_tempLbl, "--°C");
+
+  // mascot: photo (boykisser) as lv_img, pixel art drawn via SpriteCanvas
   s_mascotX = 12;
   int mascotY = 62;
   s_mascot = lv_img_create(s_home);
   lv_img_set_src(s_mascot, &s_imgOpen);
   lv_obj_set_pos(s_mascot, s_mascotX, mascotY);
-  s_mascotAlt = lv_obj_create(s_home);
-  lv_obj_set_size(s_mascotAlt, 75, 75);
-  lv_obj_set_pos(s_mascotAlt, s_mascotX, mascotY + 15);
-  lv_obj_set_style_radius(s_mascotAlt, 37, 0);
-  lv_obj_set_style_bg_opa(s_mascotAlt, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(s_mascotAlt, _c565(Config.getThemeColor()), 0);
-  lv_obj_set_style_border_width(s_mascotAlt, 2, 0);
-  lv_obj_t* altLbl = lv_label_create(s_mascotAlt);
-  lv_label_set_text(altLbl, mascot.label);
-  lv_obj_center(altLbl);
-  if (String(mascot.id) == "boykisser")
-    lv_obj_add_flag(s_mascotAlt, LV_OBJ_FLAG_HIDDEN);
-  else
-    lv_obj_add_flag(s_mascot, LV_OBJ_FLAG_HIDDEN);
+  _applyMascot();
 
   // speech bubble
   s_bubblePanel = lv_obj_create(s_home);
@@ -413,6 +475,8 @@ void LvglShellScreen::_ensureUi() {
 
 void LvglShellScreen::init() {
   _ensureUi();
+#ifdef USB_REMOTE_AUTOSTART
+#endif
   _showHome();
 }
 
@@ -439,7 +503,9 @@ void LvglShellScreen::render() {
 }
 
 void LvglShellScreen::onRestore() {
-  // back from a legacy screen: redraw everything (it drew over the panel)
+  // back from a legacy screen: redraw everything (it drew over the panel).
+  // Settings may have changed the mascot — re-apply before invalidating.
+  _applyMascot();
   lv_obj_invalidate(lv_scr_act());
 }
 

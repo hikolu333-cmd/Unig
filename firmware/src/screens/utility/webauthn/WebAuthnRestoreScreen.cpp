@@ -120,8 +120,32 @@ void WebAuthnRestoreScreen::onRender()
 // only paints once when entered (no hot-loop redraw), so the per-render
 // alloc is fine — same exemption WebAuthnBackupScreen relies on.
 
+#ifdef USE_LVGL_SHELL
+namespace {
+  lv_obj_t* lvText(lv_obj_t* parent, const char* text, uint16_t color,
+                   const lv_align_t align, int dx, int dy)
+  {
+    lv_obj_t* l = lv_label_create(parent);
+    lv_obj_set_style_text_font(l, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(l, LvglUi::c565(color), 0);
+    lv_obj_align(l, align, dx, dy);
+    lv_label_set_text(l, text);
+    return l;
+  }
+}
+#endif
+
 void WebAuthnRestoreScreen::_drawWarning()
 {
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* l = _lvEnsureLayer();
+  lvText(l, "RESTORE WARNING", TFT_RED, LV_ALIGN_TOP_MID, 0, 6);
+  lvText(l, "This wipes the existing", TFT_LIGHTGREY, LV_ALIGN_TOP_MID, 0, 24);
+  lvText(l, "master + every passkey.", TFT_LIGHTGREY, LV_ALIGN_TOP_MID, 0, 37);
+  lvText(l, "Have your 24-word backup", TFT_CYAN, LV_ALIGN_TOP_MID, 0, 52);
+  lvText(l, "ready to enter.", TFT_CYAN, LV_ALIGN_TOP_MID, 0, 65);
+  lvText(l, "[Press] Continue / [Back] Cancel", TFT_GREEN, LV_ALIGN_BOTTOM_MID, 0, -4);
+#else
   Sprite sp(&Uni.Lcd);
   sp.createSprite(bodyW(), bodyH());
   sp.fillSprite(TFT_BLACK);
@@ -145,10 +169,19 @@ void WebAuthnRestoreScreen::_drawWarning()
 
   sp.pushSprite(bodyX(), bodyY());
   sp.deleteSprite();
+#endif
 }
 
 void WebAuthnRestoreScreen::_drawBadChecksum()
 {
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* l = _lvEnsureLayer();
+  lvText(l, "Checksum mismatch", TFT_RED, LV_ALIGN_TOP_MID, 0, 6);
+  lvText(l, "One or more words are wrong.", TFT_LIGHTGREY, LV_ALIGN_TOP_MID, 0, 24);
+  lvText(l, "Master key NOT changed.", TFT_LIGHTGREY, LV_ALIGN_TOP_MID, 0, 37);
+  lvText(l, "Re-check your backup,", TFT_DARKGREY, LV_ALIGN_TOP_MID, 0, 52);
+  lvText(l, "then try again.", TFT_DARKGREY, LV_ALIGN_TOP_MID, 0, 65);
+#else
   Sprite sp(&Uni.Lcd);
   sp.createSprite(bodyW(), bodyH());
   sp.fillSprite(TFT_BLACK);
@@ -170,10 +203,34 @@ void WebAuthnRestoreScreen::_drawBadChecksum()
 
   sp.pushSprite(bodyX(), bodyY());
   sp.deleteSprite();
+#endif
 }
 
 void WebAuthnRestoreScreen::_drawConfirm()
 {
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* l = _lvEnsureLayer();
+  lvText(l, "Checksum OK", TFT_GREEN, LV_ALIGN_TOP_MID, 0, 6);
+  lvText(l, "Spot-check vs backup:", TFT_LIGHTGREY, LV_ALIGN_TOP_MID, 0, 22);
+
+  const int lx = 10;
+  int y = 38;
+  uint8_t showIdx[4] = { 0, 1, (uint8_t)(kWordCount - 2), (uint8_t)(kWordCount - 1) };
+  char line[40];
+  for (int j = 0; j < 4; j++) {
+    if (j == 2) {
+      lv_obj_t* d = lvText(l, "...", TFT_DARKGREY, LV_ALIGN_TOP_LEFT, lx, y);
+      (void)d;
+      y += 13;
+    }
+    snprintf(line, sizeof(line), "%2u. %s", (unsigned)(showIdx[j] + 1),
+             unigeek::crypto::kBip39EnglishWordlist[_words[showIdx[j]]]);
+    lvText(l, line, TFT_DARKGREY, LV_ALIGN_TOP_LEFT, lx, y);
+    y += 13;
+  }
+
+  lvText(l, "[Press] Write / [Back] Cancel", TFT_YELLOW, LV_ALIGN_BOTTOM_MID, 0, -4);
+#else
   Sprite sp(&Uni.Lcd);
   sp.createSprite(bodyW(), bodyH());
   sp.fillSprite(TFT_BLACK);
@@ -208,10 +265,17 @@ void WebAuthnRestoreScreen::_drawConfirm()
 
   sp.pushSprite(bodyX(), bodyY());
   sp.deleteSprite();
+#endif
 }
 
 void WebAuthnRestoreScreen::_drawDone()
 {
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* l = _lvEnsureLayer();
+  lvText(l, "Master key restored.", TFT_GREEN, LV_ALIGN_CENTER, 0, -18);
+  lvText(l, "Reboot the device for", TFT_LIGHTGREY, LV_ALIGN_CENTER, 0, 0);
+  lvText(l, "a clean storage state.", TFT_LIGHTGREY, LV_ALIGN_CENTER, 0, 14);
+#else
   Sprite sp(&Uni.Lcd);
   sp.createSprite(bodyW(), bodyH());
   sp.fillSprite(TFT_BLACK);
@@ -231,10 +295,15 @@ void WebAuthnRestoreScreen::_drawDone()
 
   sp.pushSprite(bodyX(), bodyY());
   sp.deleteSprite();
+#endif
 }
 
 void WebAuthnRestoreScreen::_drawError()
 {
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* l = _lvEnsureLayer();
+  lvText(l, _err ? _err : "Failed", TFT_RED, LV_ALIGN_CENTER, 0, 0);
+#else
   Sprite sp(&Uni.Lcd);
   sp.createSprite(bodyW(), bodyH());
   sp.fillSprite(TFT_BLACK);
@@ -249,6 +318,27 @@ void WebAuthnRestoreScreen::_drawError()
 
   sp.pushSprite(bodyX(), bodyY());
   sp.deleteSprite();
+#endif
 }
+
+#ifdef USE_LVGL_SHELL
+lv_obj_t* WebAuthnRestoreScreen::_lvEnsureLayer()
+{
+  if (!_layer) {
+    _layer = lv_obj_create(LvglUi::viewParent());
+    lv_obj_set_pos(_layer, 0, 0);
+    lv_obj_set_size(_layer, bodyW(), bodyH());
+    lv_obj_set_style_bg_color(_layer, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(_layer, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_layer, 0, 0);
+    lv_obj_set_style_radius(_layer, 0, 0);
+    lv_obj_set_style_pad_all(_layer, 0, 0);
+    lv_obj_clear_flag(_layer, LV_OBJ_FLAG_SCROLLABLE);
+  } else {
+    lv_obj_clean(_layer);
+  }
+  return _layer;
+}
+#endif
 
 #endif  // DEVICE_HAS_WEBAUTHN

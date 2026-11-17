@@ -1212,7 +1212,7 @@ void NRF24Screen::_pickDuckyScript(int targetIdx) {
   uint8_t n = Uni.Storage->listDir(kMjDuckyDir, entries, kMax);
 
   String              names[kMax];   // backing storage for option strings
-  InputSelectAction::Option opts[kMax];
+  InputSelectAction::Option opts[kMax] = {};
   uint8_t optCount = 0;
   for (uint8_t i = 0; i < n && optCount < kMax; i++) {
     if (entries[i].isDir) continue;

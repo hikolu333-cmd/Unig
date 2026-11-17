@@ -119,6 +119,10 @@ void GameFishingScreen::onUpdate()
 
 void GameFishingScreen::onRender()
 {
+#ifdef USE_LVGL_SHELL
+  if (!_scene.ensure(Uni.Lcd, bodyW(), bodyH())) return;
+  _spr = &_scene.sprite();
+#endif
   switch (_state) {
     case STATE_MENU:        _renderMenu();        break;
     case STATE_CAST:        _renderCast();        break;
@@ -129,6 +133,9 @@ void GameFishingScreen::onRender()
     case STATE_RESULT:      _renderResult();      break;
     case STATE_HIGH_SCORES: _renderHighScores();  break;
   }
+#ifdef USE_LVGL_SHELL
+  _scene.flush();
+#endif
 }
 
 // ── Game Logic ──────────────────────────────────────────────────────────────
@@ -294,10 +301,14 @@ void GameFishingScreen::_update()
 
 void GameFishingScreen::_renderMenu()
 {
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // game renders into the canvas sprite
+#else
   auto& lcd     = Uni.Lcd;
+#endif
   bool firstTime = (_prevState != STATE_MENU);
   if (firstTime) {
-    lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
+    lcd.fillRect(_bx(), _by(), bodyW(), bodyH(), TFT_BLACK);
     _prevState   = STATE_MENU;
     _lastMenuIdx = -1;
   }
@@ -319,7 +330,7 @@ void GameFishingScreen::_renderMenu()
     sp.setTextSize(2);
     sp.setTextColor(selNow ? Config.getThemeColor() : TFT_WHITE, TFT_BLACK);
     sp.drawString(kItems[i], bodyW() / 2, lineH / 2);
-    sp.pushSprite(bodyX(), bodyY() + startY + i * lineH);
+    sp.pushSprite(_bx(), _by() + startY + i * lineH);
     sp.deleteSprite();
   }
   _lastMenuIdx = _menuIdx;
@@ -331,22 +342,26 @@ void GameFishingScreen::_renderMenu()
     if (_lastScore > 0 && _bestScore > 0) {
       lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
       snprintf(buf, sizeof(buf), "Last: %d", _lastScore);
-      lcd.drawString(buf, bodyX() + bodyW() / 2, bodyY() + bodyH() - 12);
+      lcd.drawString(buf, _bx() + bodyW() / 2, _by() + bodyH() - 12);
       lcd.setTextColor(_lastScore == _bestScore ? TFT_YELLOW : TFT_DARKGREY, TFT_BLACK);
       snprintf(buf, sizeof(buf), "Best: %d", _bestScore);
-      lcd.drawString(buf, bodyX() + bodyW() / 2, bodyY() + bodyH() - 2);
+      lcd.drawString(buf, _bx() + bodyW() / 2, _by() + bodyH() - 2);
     } else if (_bestScore > 0) {
       lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
       snprintf(buf, sizeof(buf), "Best: %d", _bestScore);
-      lcd.drawString(buf, bodyX() + bodyW() / 2, bodyY() + bodyH() - 2);
+      lcd.drawString(buf, _bx() + bodyW() / 2, _by() + bodyH() - 2);
     }
   }
 }
 
 void GameFishingScreen::_renderCast()
 {
-  auto& lcd  = Uni.Lcd;
-  int bx = bodyX(), by = bodyY();
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // game renders into the canvas sprite
+#else
+  auto& lcd     = Uni.Lcd;
+#endif
+  int bx = _bx(), by = _by();
   int bw = (int)bodyW(), bh = (int)bodyH();
 
   int waterH   = bh / 5;
@@ -370,8 +385,12 @@ void GameFishingScreen::_renderCast()
 
 void GameFishingScreen::_renderBite()
 {
-  auto& lcd  = Uni.Lcd;
-  int bx = bodyX(), by = bodyY();
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // game renders into the canvas sprite
+#else
+  auto& lcd     = Uni.Lcd;
+#endif
+  int bx = _bx(), by = _by();
   int bw = (int)bodyW(), bh = (int)bodyH();
 
   int waterH   = bh / 5;
@@ -405,8 +424,12 @@ void GameFishingScreen::_renderBite()
 
 void GameFishingScreen::_renderReel()
 {
-  auto& lcd = Uni.Lcd;
-  int bx = bodyX(), by = bodyY();
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // game renders into the canvas sprite
+#else
+  auto& lcd     = Uni.Lcd;
+#endif
+  int bx = _bx(), by = _by();
   int bw = (int)bodyW(), bh = (int)bodyH();
   int barX = bx + 4, barW = bw - 8;
 
@@ -490,8 +513,12 @@ void GameFishingScreen::_renderCaught()
   if (_prevState == STATE_CAUGHT) return;
   _prevState = STATE_CAUGHT;
 
-  auto& lcd = Uni.Lcd;
-  int bx = bodyX(), by = bodyY();
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // game renders into the canvas sprite
+#else
+  auto& lcd     = Uni.Lcd;
+#endif
+  int bx = _bx(), by = _by();
   int bw = (int)bodyW(), bh = (int)bodyH();
   lcd.fillRect(bx, by, bw, bh, TFT_BLACK);
 
@@ -527,8 +554,12 @@ void GameFishingScreen::_renderEscaped()
   if (_prevState == STATE_ESCAPED) return;
   _prevState = STATE_ESCAPED;
 
-  auto& lcd = Uni.Lcd;
-  int bx = bodyX(), by = bodyY();
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // game renders into the canvas sprite
+#else
+  auto& lcd     = Uni.Lcd;
+#endif
+  int bx = _bx(), by = _by();
   int bw = (int)bodyW(), bh = (int)bodyH();
   lcd.fillRect(bx, by, bw, bh, TFT_BLACK);
 
@@ -547,8 +578,12 @@ void GameFishingScreen::_renderResult()
   _lastScore = _sessionScore;
   _saveHighScore();
 
-  auto& lcd = Uni.Lcd;
-  int bx = bodyX(), by = bodyY();
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // game renders into the canvas sprite
+#else
+  auto& lcd     = Uni.Lcd;
+#endif
+  int bx = _bx(), by = _by();
   int bw = (int)bodyW(), bh = (int)bodyH();
   lcd.fillRect(bx, by, bw, bh, TFT_BLACK);
 
@@ -592,8 +627,12 @@ void GameFishingScreen::_renderHighScores()
   if (_prevState == STATE_HIGH_SCORES) return;
   _prevState = STATE_HIGH_SCORES;
 
-  auto& lcd = Uni.Lcd;
-  int bx = bodyX(), by = bodyY();
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // game renders into the canvas sprite
+#else
+  auto& lcd     = Uni.Lcd;
+#endif
+  int bx = _bx(), by = _by();
   int bw = (int)bodyW(), bh = (int)bodyH();
   lcd.fillRect(bx, by, bw, bh, TFT_BLACK);
 
@@ -628,7 +667,11 @@ void GameFishingScreen::_renderHighScores()
 
 void GameFishingScreen::_drawSceneChrome(int bx, int by, int bw, int bh)
 {
-  auto& lcd    = Uni.Lcd;
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // game renders into the canvas sprite
+#else
+  auto& lcd     = Uni.Lcd;
+#endif
   int waterH   = bh / 5;
   int waterTop = by + bh - waterH;
   int platY    = waterTop - 8;      // dock platform top
@@ -677,8 +720,13 @@ void GameFishingScreen::_drawSceneChrome(int bx, int by, int bw, int bh)
 
 void GameFishingScreen::_drawWave(int bx, int waterTop, int bw)
 {
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // wave renders into the canvas sprite
+#else
+  auto& lcd = Uni.Lcd;
+#endif
   static constexpr int kH = 8;
-  Sprite sp(&Uni.Lcd);
+  Sprite sp(&lcd);
   sp.createSprite(bw, kH);
   sp.fillSprite(TFT_BLACK);
   for (int x = 0; x < bw; x++) {

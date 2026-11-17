@@ -78,6 +78,39 @@ void WifiChannelMonitorScreen::onRender()
   const uint16_t maxBarH = (uint16_t)(bodyH() - labelH - 2);
   const uint16_t stepX   = (uint16_t)(bodyW() / _NUM_CH);
 
+#ifdef USE_LVGL_SHELL
+  if (!_chromeDrawn) {
+    lv_obj_t* root = LvglUi::viewParent();
+    for (uint8_t ch = 1; ch <= _NUM_CH; ch++) {
+      const int bx = (ch - 1) * stepX + 2;
+
+      lv_obj_t* bar = lv_obj_create(root);
+      lv_obj_set_pos(bar, bx, 0);
+      lv_obj_set_size(bar, stepX - 4, 0);
+      lv_obj_set_style_bg_color(bar, LvglUi::c565(themeColor), 0);
+      lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+      lv_obj_set_style_radius(bar, 1, 0);
+      lv_obj_set_style_border_width(bar, 0, 0);
+      lv_obj_set_style_pad_all(bar, 0, 0);
+      lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+      _bars[ch] = bar;
+
+      lv_obj_t* l = lv_label_create(root);
+      lv_obj_set_style_text_font(l, &lv_font_montserrat_14, 0);
+      lv_obj_set_style_text_color(l, lv_color_white(), 0);
+      lv_obj_set_pos(l, bx + stepX / 2 - 6, bodyH() - labelH + 2);
+      char buf[4];
+      snprintf(buf, sizeof(buf), "%u", ch);
+      lv_label_set_text(l, buf);
+    }
+    _lblScan = lv_label_create(root);
+    lv_obj_set_style_text_font(_lblScan, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_lblScan, lv_color_white(), 0);
+    lv_obj_align(_lblScan, LV_ALIGN_TOP_MID, 0, maxBarH / 2 - 7);
+    lv_label_set_text(_lblScan, "Scanning...");
+    _chromeDrawn = true;
+  }
+#else
   if (!_chromeDrawn) {
     lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
     lcd.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -89,8 +122,12 @@ void WifiChannelMonitorScreen::onRender()
     lcd.setTextDatum(TL_DATUM);
     _chromeDrawn = true;
   }
+#endif
 
   if (_firstSweep) {
+#ifdef USE_LVGL_SHELL
+    lv_obj_clear_flag(_lblScan, LV_OBJ_FLAG_HIDDEN);
+#else
     if (!_scanningVisible) {
       lcd.setTextColor(TFT_WHITE, TFT_BLACK);
       lcd.setTextDatum(MC_DATUM);
@@ -98,15 +135,20 @@ void WifiChannelMonitorScreen::onRender()
       lcd.setTextDatum(TL_DATUM);
       _scanningVisible = true;
     }
+#endif
     return;
   }
 
+#ifdef USE_LVGL_SHELL
+  lv_obj_add_flag(_lblScan, LV_OBJ_FLAG_HIDDEN);
+#else
   if (_scanningVisible) {
     lcd.fillRect(bodyX(), bodyY(), bodyW(), maxBarH, TFT_BLACK);
     memset(_lastBarH,   0, sizeof(_lastBarH));
     memset(_animStartH, 0, sizeof(_animStartH));
     _scanningVisible = false;
   }
+#endif
 
   uint32_t maxCount = 1;
   for (uint8_t i = 1; i <= _NUM_CH; i++) {
@@ -135,6 +177,15 @@ void WifiChannelMonitorScreen::onRender()
   }
   if (!changed) { if (done) _animActive = false; return; }
 
+#ifdef USE_LVGL_SHELL
+  const uint16_t baseY = (uint16_t)(bodyY() - LvglUi::viewOffsetY() + maxBarH);
+  for (uint8_t ch = 1; ch <= _NUM_CH; ch++) {
+    lv_obj_set_height(_bars[ch], h[ch]);
+    lv_obj_set_y(_bars[ch], baseY - h[ch]);
+  }
+  memcpy(_lastBarH, h, sizeof(h));
+  if (done) _animActive = false;
+#else
   const uint16_t baseY = (uint16_t)(bodyY() + maxBarH);
 
   // Dim glow color (1/3 brightness of theme)
@@ -171,6 +222,7 @@ void WifiChannelMonitorScreen::onRender()
     lcd.fillCircle(cx[ch], ncy[ch], 2, themeColor);
     lcd.fillCircle(cx[ch], ncy[ch], 1, TFT_WHITE);
   }
+#endif
 
   memcpy(_lastBarH, h, sizeof(h));
   if (done) _animActive = false;

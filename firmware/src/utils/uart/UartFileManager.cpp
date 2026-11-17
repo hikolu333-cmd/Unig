@@ -14,9 +14,16 @@ void UartFileManager::begin(bool fmEnabled, bool mirrorEnabled) {
   if (fmEnabled) {
     // FM streams up to ~1 KB/frame, so grow the RX FIFO — setRxBufferSize is
     // ignored once the driver is installed, so end + re-begin Serial first.
+    // NOT on the USB-Remote build: there Serial is HWCDC (USB-Serial-JTAG), and
+    // end() deinits the USB peripheral (D+/D- low → host re-enumeration) and
+    // vRingbufferDelete()s the TX ring — prints buffered before the call are
+    // lost and outbound traffic never recovers. The default 256-byte RX FIFO
+    // is fine for mirror + nav input; file-manager bulk just drains slower.
+#ifndef USB_REMOTE_AUTOSTART
     Serial.end();
     Serial.setRxBufferSize(4096);
     Serial.begin(115200);
+#endif
     _fm = new FileManagerCore();
     _fm->setSender(_sendBytes);
   }

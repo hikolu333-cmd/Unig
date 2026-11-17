@@ -45,7 +45,7 @@ void ChameleonMfuToolsScreen::_writeFromFile() {
     return;
   }
   const uint8_t count = n < kMax ? n : kMax;
-  InputSelectAction::Option opts[kMax];
+  InputSelectAction::Option opts[kMax] = {};
   String vals[kMax];
   for (uint8_t i = 0; i < count; ++i) {
     vals[i] = String(i);
@@ -70,7 +70,7 @@ void ChameleonMfuToolsScreen::_writeFromSlot() {
     return;
   }
 
-  InputSelectAction::Option opts[8];
+  InputSelectAction::Option opts[8] = {};
   String labels[8];
   String vals[8];
   for (uint8_t i = 0; i < 8; ++i) {

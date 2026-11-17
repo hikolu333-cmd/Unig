@@ -2,6 +2,9 @@
 
 #include <esp_wifi.h>
 #include "ui/templates/BaseScreen.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/LvglUi.h"
+#endif
 
 class WifiKarmaDetectorScreen : public BaseScreen
 {
@@ -44,4 +47,10 @@ private:
   void _stopScan();
   void _sendProbe();
   void _onHit();
+
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* _lblTitle  = nullptr;  // "Monitoring..." / "Karma attack detected"
+  lv_obj_t* _lblInfo   = nullptr;  // BSSID (white) when detected
+  lv_obj_t* _lblStatus = nullptr;  // status line / "RSSI dBm  CH:n"
+#endif
 };

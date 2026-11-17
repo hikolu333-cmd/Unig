@@ -5,6 +5,7 @@
 #include "screens/wifi/WifiMenuScreen.h"
 #include "utils/network/WifiAttackUtil.h"
 #include "ui/actions/ShowStatusAction.h"
+#include "ui/components/TempBadge.h"
 
 #include <WiFi.h>
 
@@ -133,9 +134,11 @@ void WifiEvilTwinScreen::onItemSelected(uint8_t index)
 void WifiEvilTwinScreen::onUpdate()
 {
   if (_state != STATE_RUNNING) {
+    TempBadge::hideLv();
     ListScreen::onUpdate();
     return;
   }
+  TempBadge::drawLv();
 
   // Handle exit
   if (Uni.Nav->wasPressed()) {

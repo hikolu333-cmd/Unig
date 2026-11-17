@@ -3,6 +3,9 @@
 #include <Arduino.h>
 #include "ui/templates/ListScreen.h"
 #include "ui/views/BrowseFileView.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/SpriteCanvas.h"
+#endif
 
 class GameMusicComposerScreen : public ListScreen
 {
@@ -86,4 +89,10 @@ private:
   String _serializeRtttl() const;
   bool   _loadFile(const String& path);
   bool   _saveFile(const String& path);
+
+#ifdef USE_LVGL_SHELL
+  // Editor + playback render the full body as pixel art — bridged via
+  // canvas; destroyed again when the screen falls back to its list states.
+  SpriteCanvas _scene;
+#endif
 };

@@ -1,6 +1,9 @@
 #pragma once
 
 #include "ui/templates/BaseScreen.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/LvglUi.h"
+#endif
 
 class WifiESPNowChatScreen : public BaseScreen
 {
@@ -46,4 +49,9 @@ private:
   bool         _composing = false;
   bool         _dirty     = false;
   portMUX_TYPE _lock      = portMUX_INITIALIZER_UNLOCKED;
+
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* _cont       = nullptr;  // flex-column of chat lines
+  lv_obj_t* _lblFooter  = nullptr;  // "[Press] Msg"
+#endif
 };

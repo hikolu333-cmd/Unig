@@ -5,6 +5,9 @@
 #ifdef DEVICE_HAS_USB_HID
 
 #include "ui/templates/BaseScreen.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/LvglUi.h"
+#endif
 
 // MassStorageScreen — exposes the device's storage to a USB host as a removable
 // drive. Standalone: while mounted the host owns the volume, so the firmware
@@ -36,6 +39,12 @@ private:
   bool     _lastEjected  = false;
 
   void _exit();  // eject + goBack
+
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* _lbl[4] = {};      // centered text lines (state screens)
+  lv_obj_t* _lblF = nullptr;   // "[Back] Eject" footer
+  lv_obj_t* _lvLine(int slot, const char* text, uint16_t color, int y, bool big);
+#endif
 };
 
 #endif  // DEVICE_HAS_USB_HID

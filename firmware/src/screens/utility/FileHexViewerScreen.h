@@ -1,6 +1,9 @@
 #pragma once
 
 #include "ui/templates/BaseScreen.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/LvglUi.h"
+#endif
 
 class FileHexViewerScreen : public BaseScreen
 {
@@ -32,4 +35,9 @@ private:
 
   void _renderHex();
   void _goBack();
+
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* _cont = nullptr;   // flex-column of visible hex rows
+  void _renderHexLv();
+#endif
 };

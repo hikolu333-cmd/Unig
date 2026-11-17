@@ -428,7 +428,7 @@ void WifiCiwZeroclickScreen::_drawBroadcasting()
 void WifiCiwZeroclickScreen::_selectCategories()
 {
   // Toggle through categories using InputSelectAction
-  InputSelectAction::Option opts[CAT_COUNT + 2];
+  InputSelectAction::Option opts[CAT_COUNT + 2] = {};
   char labels[CAT_COUNT][20];
   char values[CAT_COUNT][4];
 

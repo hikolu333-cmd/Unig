@@ -131,6 +131,33 @@ void RandomLineViewerScreen::_shuffle() {
 }
 
 void RandomLineViewerScreen::_renderDisplay() {
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* root = LvglUi::viewParent();
+  const int w = bodyW(), h = bodyH();
+
+  if (!_chromeDrawn) {
+    _lblCount = lv_label_create(root);
+    lv_obj_set_style_text_font(_lblCount, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_lblCount, LvglUi::c565(TFT_DARKGREY), 0);
+    lv_obj_align(_lblCount, LV_ALIGN_TOP_MID, 0, 2);
+
+    _lblText = lv_label_create(root);
+    lv_obj_set_style_text_font(_lblText, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(_lblText, lv_color_white(), 0);
+    lv_obj_align(_lblText, LV_ALIGN_CENTER, 0, 0);
+    lv_label_set_long_mode(_lblText, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(_lblText, w - 8);
+    lv_obj_set_style_text_align(_lblText, LV_TEXT_ALIGN_CENTER, 0);
+
+    _chromeDrawn = true;
+  }
+
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%u / %u", _current + 1, _lineCount);
+  lv_label_set_text(_lblCount, buf);
+  lv_label_set_text(_lblText,
+                    (_lines && _lineCount > 0) ? _lines[_order[_current]] : "");
+#else
   auto& lcd = Uni.Lcd;
   int x = bodyX(), y = bodyY(), w = bodyW(), h = bodyH();
 
@@ -233,6 +260,7 @@ void RandomLineViewerScreen::_renderDisplay() {
     sp.deleteSprite();
     _chromeDrawn = true;
   }
+#endif
 }
 
 void RandomLineViewerScreen::_goBack() {

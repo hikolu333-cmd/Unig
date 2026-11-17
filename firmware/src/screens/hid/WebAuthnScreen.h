@@ -7,6 +7,9 @@
 #include "ui/templates/BaseScreen.h"
 #include "utils/webauthn/USBFidoUtil.h"
 #include "utils/webauthn/Ctaphid.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/LvglUi.h"
+#endif
 
 class WebAuthnScreen : public BaseScreen {
 public:
@@ -41,6 +44,16 @@ private:
 
   void _onReport(const uint8_t* buf64);
   static void _onReportThunk(const uint8_t* buf64, void* user);
+
+#ifdef USE_LVGL_SHELL
+  // Centered text lines reused by every state screen (mismatch / setup /
+  // prompt card); status + tx labels for the idle body.
+  lv_obj_t* _lbl[5]   = {};
+  lv_obj_t* _lblStat  = nullptr;  // "Connected" / "Waiting..." banner
+  lv_obj_t* _lblTx    = nullptr;  // "Tx: N" counter line
+  lv_obj_t* _lvLine(int slot, const char* text, uint16_t color, int y, bool big);
+  void _lvHideLines();
+#endif
 };
 
 #endif  // DEVICE_HAS_WEBAUTHN

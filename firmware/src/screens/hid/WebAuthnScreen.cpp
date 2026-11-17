@@ -114,6 +114,68 @@ void WebAuthnScreen::onUpdate()
 
 void WebAuthnScreen::onRender()
 {
+#ifdef USE_LVGL_SHELL
+  if (_profileMismatch) {
+    _lvHideLines();
+    _lvLine(0, "USB busy", TFT_RED, -22, true);
+    _lvLine(1, "Keyboard/Mouse already", TFT_LIGHTGREY, 2, false);
+    _lvLine(2, "claimed USB this boot.", TFT_LIGHTGREY, 16, false);
+    _lvLine(3, "Reboot, then open WebAuthn first.", TFT_YELLOW, 32, false);
+    return;
+  }
+
+  if (_noMaster) {
+    _lvHideLines();
+    _lvLine(0, "Setup needed", TFT_YELLOW, -40, true);
+    _lvLine(1, "No master key on device.", TFT_LIGHTGREY, -18, false);
+    _lvLine(2, "Create one first via:", TFT_LIGHTGREY, -4, false);
+    _lvLine(3, "Utilities > Manage WebAuthn", TFT_CYAN, 10, false);
+    _lvLine(4, ">  Generate BIP39", TFT_CYAN, 24, false);
+    return;
+  }
+
+  bool connected = webauthn::fido().isConnected();
+
+  if (!_chromeDrawn) {
+    _chromeDrawn   = true;
+    _lastConnected = !connected;  // force first status paint
+    _lastTxDrawn   = (uint32_t)-1;
+    _lvHideLines();
+  }
+
+  if (_state == ST_PROMPTING) {
+    _lvLine(0, "Confirm", TFT_YELLOW, -22, true);
+    _lvLine(1, _promptRpId ? _promptRpId : "(unknown)", TFT_LIGHTGREY, 2, false);
+    _lvLine(2, "[Press] Allow / [Back] Deny", TFT_GREEN, 20, false);
+    return;
+  }
+
+  if (_lastConnected != connected) {
+    _lastConnected = connected;
+    if (!_lblStat) {
+      _lblStat = lv_label_create(LvglUi::viewParent());
+      lv_obj_set_style_text_font(_lblStat, &lv_font_montserrat_20, 0);
+      lv_obj_align(_lblStat, LV_ALIGN_CENTER, 0, -14);
+    }
+    lv_obj_set_style_text_color(_lblStat,
+                                LvglUi::c565(connected ? TFT_GREEN : TFT_RED), 0);
+    lv_label_set_text(_lblStat, connected ? "Connected" : "Waiting...");
+  }
+
+  if (_lastTxDrawn != _txCount) {
+    _lastTxDrawn = _txCount;
+    if (!_lblTx) {
+      _lblTx = lv_label_create(LvglUi::viewParent());
+      lv_obj_set_style_text_font(_lblTx, &lv_font_montserrat_14, 0);
+      lv_obj_set_style_text_color(_lblTx, LvglUi::c565(TFT_DARKGREY), 0);
+      lv_obj_align(_lblTx, LV_ALIGN_CENTER, 0, 16);
+    }
+    char buf[32];
+    snprintf(buf, sizeof(buf), "Tx: %lu", (unsigned long)_txCount);
+    lv_label_set_text(_lblTx, buf);
+  }
+  return;
+#else
   auto& lcd = Uni.Lcd;
 
   if (_profileMismatch) {
@@ -222,7 +284,30 @@ void WebAuthnScreen::onRender()
     sp.deleteSprite();
   }
   (void)centerX;  // reserved for future indicators (e.g. UV/PIN status)
+#endif
 }
+
+#ifdef USE_LVGL_SHELL
+lv_obj_t* WebAuthnScreen::_lvLine(int slot, const char* text, uint16_t color, int y, bool big)
+{
+  if (slot < 0 || slot > 4) return nullptr;
+  if (!_lbl[slot]) _lbl[slot] = lv_label_create(LvglUi::viewParent());
+  lv_obj_clear_flag(_lbl[slot], LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_set_style_text_font(_lbl[slot], big ? &lv_font_montserrat_20 : &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(_lbl[slot], LvglUi::c565(color), 0);
+  lv_obj_align(_lbl[slot], LV_ALIGN_CENTER, 0, y);
+  lv_label_set_text(_lbl[slot], text);
+  return _lbl[slot];
+}
+
+void WebAuthnScreen::_lvHideLines()
+{
+  for (int i = 0; i < 5; i++) {
+    if (_lbl[i]) lv_obj_add_flag(_lbl[i], LV_OBJ_FLAG_HIDDEN);
+  }
+}
+#endif
 
 bool WebAuthnScreen::_onUserPresence(const char* rpId, void* user)
 {

@@ -39,7 +39,7 @@ void ChameleonMfcAttacksScreen::onItemSelected(uint8_t index) {
         render();
         break;
       }
-      InputSelectAction::Option opts[8];
+      InputSelectAction::Option opts[8] = {};
       String labels[8], vals[8];
       for (uint8_t i = 0; i < 8; ++i) {
         labels[i] = String("Slot ") + (i + 1) + " - " + ChameleonClient::tagTypeName(types[i].hfType);

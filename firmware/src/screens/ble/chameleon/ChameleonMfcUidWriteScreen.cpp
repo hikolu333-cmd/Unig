@@ -7,7 +7,12 @@
 #include "utils/IdentityFile.h"
 #include "utils/ble/ChameleonClient.h"
 
+#ifdef USE_LVGL_SHELL
+#include "ui/components/TagPrompt.h"
+namespace { void prompt(const char* m,int x,int y,int w,int h){ (void)x;(void)y;(void)w;(void)h; TagPrompt::show(m, x, y, w, h); } }
+#else
 namespace { void prompt(const char* m,int x,int y,int w,int h){auto&d=Uni.Lcd;d.fillRect(x,y,w,h,TFT_BLACK);d.setTextDatum(MC_DATUM);d.setTextColor(TFT_YELLOW,TFT_BLACK);d.drawString(m,x+w/2,y+h/2);} }
+#endif
 ChameleonMfcUidWriteScreen::ChameleonMfcUidWriteScreen(const uint8_t* u,uint8_t n){if(u&&(n==4||n==7)){memcpy(_uid,u,n);_uidLen=n;}}
 String ChameleonMfcUidWriteScreen::uidText()const{String s;char b[4];for(uint8_t i=0;i<_uidLen;++i){snprintf(b,sizeof(b),"%s%02X",i?":":"",_uid[i]);s+=b;}return s;}
 bool ChameleonMfcUidWriteScreen::load(){if(!_fromFile)return _uidLen==4||_uidLen==7;size_t n=0;return IdentityFile::loadNfcUid(_path,_uid,sizeof(_uid),n)&&((_uidLen=(uint8_t)n)==4||_uidLen==7);}
@@ -16,4 +21,16 @@ void ChameleonMfcUidWriteScreen::onInit(){if(!load()){ShowStatusAction::show("In
 void ChameleonMfcUidWriteScreen::onRender(){_view.render(bodyX(),bodyY(),bodyW(),bodyH());}
 void ChameleonMfcUidWriteScreen::onUpdate(){if(_busy||!Uni.Nav->wasPressed())return;auto d=Uni.Nav->readDirection();if(d==INavigation::DIR_BACK){Screen.goBack();return;}if(d==INavigation::DIR_PRESS){write();return;}_view.onNav(d);}
 bool ChameleonMfcUidWriteScreen::readGen1aBlock0(uint8_t out[16]){auto&c=ChameleonClient::get();uint8_t resp[32]={};uint16_t n=0,st=0;uint8_t halt[2]={0x50,0};(void)c.hf14ARaw(64|32|8,200,16,halt,2,resp,&n,sizeof(resp),&st);uint8_t wake=0x40;n=0;st=0;bool ok=c.hf14ARaw(128|64|8,250,7,&wake,1,resp,&n,sizeof(resp),&st)&&(st==0||st==0x68)&&n>=1&&resp[0]==0x0A;if(ok){uint8_t unlock=0x43;n=0;st=0;ok=c.hf14ARaw(64|8,250,8,&unlock,1,resp,&n,sizeof(resp),&st)&&(st==0||st==0x68)&&n>=1&&resp[0]==0x0A;}if(ok){uint8_t rd[2]={0x30,0};n=0;st=0;ok=c.hf14ARaw(64|32|16|8,500,16,rd,2,resp,&n,sizeof(resp),&st)&&(st==0||st==0x68)&&n>=16;if(ok)memcpy(out,resp,16);}return ok;}
-void ChameleonMfcUidWriteScreen::write(){_busy=true;auto&c=ChameleonClient::get();uint8_t prev=0;bool restore=c.getMode(&prev);c.setMode(1);Header h;h.render(title());StatusBar::refresh();prompt("Place target tag...",bodyX(),bodyY(),bodyW(),bodyH());uint8_t u[7]={},n=0,a[2]={},sak=0;bool found=false;uint32_t start=millis();while(millis()-start<5000){Uni.update();if(Uni.Nav->wasPressed()&&Uni.Nav->readDirection()==INavigation::DIR_BACK){if(restore)c.setMode(prev);_busy=false;preview();return;}if(c.scan14A(u,&n,a,&sak)){found=true;break;}delay(50);}if(!found){if(restore)c.setMode(prev);_busy=false;preview();ShowStatusAction::show("Tag not detected",1200);return;}MagicCardType m=c.detectMagicType();if(m!=MagicCardType::GEN1A&&m!=MagicCardType::GEN3){if(restore)c.setMode(prev);_busy=false;preview();ShowStatusAction::show("Tag not Gen1A/Gen3",2000);return;}if(m==MagicCardType::GEN1A&&_uidLen!=4){if(restore)c.setMode(prev);_busy=false;preview();ShowStatusAction::show("Gen1A UID must be 4 bytes",1600);return;}uint8_t b0[16]={};bool ok=m==MagicCardType::GEN3||readGen1aBlock0(b0);if(ok)ok=c.writeMagicUid(m,_uid,_uidLen,b0);if(restore)c.setMode(prev);_busy=false;if(ok){Uni.Lcd.fillRect(bodyX(),bodyY(),bodyW(),bodyH(),TFT_BLACK);ShowStatusAction::show("UID written",1600);Screen.goBack();return;}preview();ShowStatusAction::show("Failed",1600);}
+void ChameleonMfcUidWriteScreen::write(){_busy=true;auto&c=ChameleonClient::get();uint8_t prev=0;bool restore=c.getMode(&prev);c.setMode(1);
+#ifdef USE_LVGL_SHELL
+prompt("Place target tag...",bodyX(),bodyY(),bodyW(),bodyH());
+#else
+Header h;h.render(title());StatusBar::refresh();prompt("Place target tag...",bodyX(),bodyY(),bodyW(),bodyH());
+#endif
+uint8_t u[7]={},n=0,a[2]={},sak=0;bool found=false;uint32_t start=millis();while(millis()-start<5000){Uni.update();if(Uni.Nav->wasPressed()&&Uni.Nav->readDirection()==INavigation::DIR_BACK){if(restore)c.setMode(prev);_busy=false;preview();return;}if(c.scan14A(u,&n,a,&sak)){found=true;break;}delay(50);}if(!found){if(restore)c.setMode(prev);_busy=false;preview();ShowStatusAction::show("Tag not detected",1200);return;}MagicCardType m=c.detectMagicType();if(m!=MagicCardType::GEN1A&&m!=MagicCardType::GEN3){if(restore)c.setMode(prev);_busy=false;preview();ShowStatusAction::show("Tag not Gen1A/Gen3",2000);return;}if(m==MagicCardType::GEN1A&&_uidLen!=4){if(restore)c.setMode(prev);_busy=false;preview();ShowStatusAction::show("Gen1A UID must be 4 bytes",1600);return;}uint8_t b0[16]={};bool ok=m==MagicCardType::GEN3||readGen1aBlock0(b0);if(ok)ok=c.writeMagicUid(m,_uid,_uidLen,b0);if(restore)c.setMode(prev);_busy=false;if(ok){
+#ifdef USE_LVGL_SHELL
+TagPrompt::clear();
+#else
+Uni.Lcd.fillRect(bodyX(),bodyY(),bodyW(),bodyH(),TFT_BLACK);
+#endif
+ShowStatusAction::show("UID written",1600);Screen.goBack();return;}preview();ShowStatusAction::show("Failed",1600);}

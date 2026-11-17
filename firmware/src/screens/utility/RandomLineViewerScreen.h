@@ -1,6 +1,9 @@
 #pragma once
 
 #include "ui/templates/BaseScreen.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/LvglUi.h"
+#endif
 
 class RandomLineViewerScreen : public BaseScreen {
 public:
@@ -29,4 +32,9 @@ private:
   void _shuffle();
   void _renderDisplay();
   void _goBack();
+
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* _lblCount = nullptr;  // "X / Y" (grey, top-center)
+  lv_obj_t* _lblText  = nullptr;  // current random line (white, centered, wrapped)
+#endif
 };

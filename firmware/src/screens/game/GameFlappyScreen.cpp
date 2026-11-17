@@ -85,10 +85,17 @@ void GameFlappyScreen::onUpdate()
 
 void GameFlappyScreen::onRender()
 {
+#ifdef USE_LVGL_SHELL
+  if (!_scene.ensure(Uni.Lcd, bodyW(), bodyH())) return;
+  _spr = &_scene.sprite();
+#endif
   if      (_state == STATE_MENU)         _renderMenu();
   else if (_state == STATE_PLAY)         _renderPlay();
   else if (_state == STATE_HIGH_SCORES)  _renderHighScores();
   else                                   _renderResult();
+#ifdef USE_LVGL_SHELL
+  _scene.flush();
+#endif
 }
 
 // ── Game Logic ──────────────────────────────────────────────────────────────
@@ -220,10 +227,14 @@ bool GameFlappyScreen::_checkCollision()
 
 void GameFlappyScreen::_renderMenu()
 {
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // game renders into the canvas sprite
+#else
   auto& lcd = Uni.Lcd;
+#endif
   bool firstTime = (_prevState != STATE_MENU);
   if (firstTime) {
-    lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
+    lcd.fillRect(_bx(), _by(), bodyW(), bodyH(), TFT_BLACK);
     _prevState   = STATE_MENU;
     _lastMenuIdx = -1;
   }
@@ -245,7 +256,7 @@ void GameFlappyScreen::_renderMenu()
     sp.setTextSize(2);
     sp.setTextColor(selNow ? Config.getThemeColor() : TFT_WHITE, TFT_BLACK);
     sp.drawString(items[i], bodyW() / 2, lineH / 2);
-    sp.pushSprite(bodyX(), bodyY() + startY + i * lineH);
+    sp.pushSprite(_bx(), _by() + startY + i * lineH);
     sp.deleteSprite();
   }
 
@@ -258,22 +269,26 @@ void GameFlappyScreen::_renderMenu()
     if (_lastScore > 0 && _bestScore > 0) {
       lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
       snprintf(buf, sizeof(buf), "Last: %d", _lastScore);
-      lcd.drawString(buf, bodyX() + bodyW() / 2, bodyY() + bodyH() - 12);
+      lcd.drawString(buf, _bx() + bodyW() / 2, _by() + bodyH() - 12);
       lcd.setTextColor(_lastScore == _bestScore ? TFT_YELLOW : TFT_DARKGREY, TFT_BLACK);
       snprintf(buf, sizeof(buf), "Best: %d", _bestScore);
-      lcd.drawString(buf, bodyX() + bodyW() / 2, bodyY() + bodyH() - 2);
+      lcd.drawString(buf, _bx() + bodyW() / 2, _by() + bodyH() - 2);
     } else if (_bestScore > 0) {
       lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
       snprintf(buf, sizeof(buf), "Best: %d", _bestScore);
-      lcd.drawString(buf, bodyX() + bodyW() / 2, bodyY() + bodyH() - 2);
+      lcd.drawString(buf, _bx() + bodyW() / 2, _by() + bodyH() - 2);
     }
   }
 }
 
 void GameFlappyScreen::_renderPlay()
 {
-  auto& lcd    = Uni.Lcd;
-  int   bx     = bodyX(), by0 = bodyY();
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // game renders into the canvas sprite
+#else
+  auto& lcd = Uni.Lcd;
+#endif
+  int   bx     = _bx(), by0 = _by();
   int   w      = (int)bodyW(), h = (int)bodyH();
   int   birdX  = 16, birdY = (int)_birdY;
   int   groundTop = h - kGroundH;
@@ -371,32 +386,36 @@ void GameFlappyScreen::_renderResult()
   if (_prevState == STATE_RESULT) return;
   _prevState = STATE_RESULT;
 
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // game renders into the canvas sprite
+#else
   auto& lcd = Uni.Lcd;
-  lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
+#endif
+  lcd.fillRect(_bx(), _by(), bodyW(), bodyH(), TFT_BLACK);
   lcd.setTextDatum(MC_DATUM);
   lcd.setTextSize(2);
 
   lcd.setTextColor(TFT_RED, TFT_BLACK);
-  lcd.drawString("Game Over!", bodyX() + bodyW() / 2, bodyY() + bodyH() / 2 - 24);
+  lcd.drawString("Game Over!", _bx() + bodyW() / 2, _by() + bodyH() / 2 - 24);
 
   char buf[24];
   lcd.setTextSize(1);
   lcd.setTextColor(TFT_WHITE, TFT_BLACK);
   snprintf(buf, sizeof(buf), "Score: %d", _score);
-  lcd.drawString(buf, bodyX() + bodyW() / 2, bodyY() + bodyH() / 2);
+  lcd.drawString(buf, _bx() + bodyW() / 2, _by() + bodyH() / 2);
 
   if (_isNewHigh) {
     lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
-    lcd.drawString("NEW HIGH!", bodyX() + bodyW() / 2, bodyY() + bodyH() / 2 + 14);
+    lcd.drawString("NEW HIGH!", _bx() + bodyW() / 2, _by() + bodyH() / 2 + 14);
   } else {
     lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
     snprintf(buf, sizeof(buf), "Best: %d", _bestScore);
-    lcd.drawString(buf, bodyX() + bodyW() / 2, bodyY() + bodyH() / 2 + 14);
+    lcd.drawString(buf, _bx() + bodyW() / 2, _by() + bodyH() / 2 + 14);
   }
 
   lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
   lcd.setTextDatum(BC_DATUM);
-  lcd.drawString("Press to continue", bodyX() + bodyW() / 2, bodyY() + bodyH());
+  lcd.drawString("Press to continue", _bx() + bodyW() / 2, _by() + bodyH());
 }
 
 // ── High Score Storage ───────────────────────────────────────────────────────
@@ -451,13 +470,17 @@ void GameFlappyScreen::_renderHighScores()
   if (_prevState == STATE_HIGH_SCORES) return;
   _prevState = STATE_HIGH_SCORES;
 
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // game renders into the canvas sprite
+#else
   auto& lcd = Uni.Lcd;
-  lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
+#endif
+  lcd.fillRect(_bx(), _by(), bodyW(), bodyH(), TFT_BLACK);
 
   lcd.setTextSize(1);
   lcd.setTextDatum(TC_DATUM);
   lcd.setTextColor(Config.getThemeColor(), TFT_BLACK);
-  lcd.drawString("Top Scores", bodyX() + bodyW() / 2, bodyY() + 2);
+  lcd.drawString("Top Scores", _bx() + bodyW() / 2, _by() + 2);
 
   const int lineH  = 14;
   const int startY = 18;
@@ -468,17 +491,17 @@ void GameFlappyScreen::_renderHighScores()
     lcd.setTextColor(col, TFT_BLACK);
     lcd.setTextDatum(TL_DATUM);
     snprintf(buf, sizeof(buf), "#%u", i + 1);
-    lcd.drawString(buf, bodyX() + 8, bodyY() + startY + i * lineH);
+    lcd.drawString(buf, _bx() + 8, _by() + startY + i * lineH);
     lcd.setTextDatum(TR_DATUM);
     if (_topScores[i] > 0)
       snprintf(buf, sizeof(buf), "%d", _topScores[i]);
     else
       snprintf(buf, sizeof(buf), "--");
-    lcd.drawString(buf, bodyX() + bodyW() - 8, bodyY() + startY + i * lineH);
+    lcd.drawString(buf, _bx() + bodyW() - 8, _by() + startY + i * lineH);
   }
 
   lcd.setTextSize(1);
   lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
   lcd.setTextDatum(BC_DATUM);
-  lcd.drawString("Press to go back", bodyX() + bodyW() / 2, bodyY() + bodyH() - 1);
+  lcd.drawString("Press to go back", _bx() + bodyW() / 2, _by() + bodyH() - 1);
 }

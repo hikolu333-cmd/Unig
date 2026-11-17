@@ -144,7 +144,7 @@ void WifiKarmaEapolScreen::onUpdate()
       _pairFound        = true;
     } else {
       char macBufs[MAX_PAIR_DEVICES][18];
-      InputSelectAction::Option opts[MAX_PAIR_DEVICES];
+      InputSelectAction::Option opts[MAX_PAIR_DEVICES] = {};
       for (int i = 0; i < _pairDeviceCount; i++) {
         snprintf(macBufs[i], 18, "%02X:%02X:%02X:%02X:%02X:%02X",
                  _pairDevices[i][0], _pairDevices[i][1], _pairDevices[i][2],

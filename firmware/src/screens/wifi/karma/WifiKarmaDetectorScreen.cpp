@@ -72,6 +72,47 @@ void WifiKarmaDetectorScreen::onUpdate()
 
 void WifiKarmaDetectorScreen::onRender()
 {
+#ifdef USE_LVGL_SHELL
+  if (!_lblTitle) {
+    lv_obj_t* root = LvglUi::viewParent();
+
+    _lblTitle = lv_label_create(root);
+    lv_obj_set_style_text_font(_lblTitle, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(_lblTitle, LvglUi::c565(TFT_DARKGREY), 0);
+    lv_obj_align(_lblTitle, LV_ALIGN_TOP_MID, 0, bodyH() / 2 - 26);
+
+    _lblInfo = lv_label_create(root);
+    lv_obj_set_style_text_font(_lblInfo, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_lblInfo, lv_color_white(), 0);
+    lv_obj_align(_lblInfo, LV_ALIGN_TOP_MID, 0, bodyH() / 2 - 4);
+
+    _lblStatus = lv_label_create(root);
+    lv_obj_set_style_text_font(_lblStatus, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_lblStatus, LvglUi::c565(TFT_DARKGREY), 0);
+    lv_obj_align(_lblStatus, LV_ALIGN_TOP_MID, 0, bodyH() / 2 + 14);
+  }
+
+  if (_state == STATE_SCANNING) {
+    lv_obj_set_style_text_color(_lblTitle, LvglUi::c565(TFT_DARKGREY), 0);
+    lv_label_set_text(_lblTitle, "Monitoring...");
+    lv_label_set_text(_lblInfo, "");
+    lv_label_set_text(_lblStatus, _statusLine[0] ? _statusLine : "Starting...");
+  } else {
+    // Alert view
+    char bssid[20];
+    snprintf(bssid, sizeof(bssid), "%02X:%02X:%02X:%02X:%02X:%02X",
+             _hitBssid[0], _hitBssid[1], _hitBssid[2],
+             _hitBssid[3], _hitBssid[4], _hitBssid[5]);
+    char info[32];
+    snprintf(info, sizeof(info), "%d dBm   CH:%d", (int)_hitRssi, _hitChannel);
+
+    lv_obj_set_style_text_color(_lblTitle, LvglUi::c565(TFT_RED), 0);
+    lv_label_set_text(_lblTitle, "Karma attack detected");
+    lv_label_set_text(_lblInfo, bssid);
+    lv_obj_set_style_text_color(_lblStatus, LvglUi::c565(TFT_YELLOW), 0);
+    lv_label_set_text(_lblStatus, info);
+  }
+#else
   Sprite sp(&Uni.Lcd);
   sp.createSprite(bodyW(), bodyH());
   sp.fillSprite(TFT_BLACK);
@@ -104,6 +145,7 @@ void WifiKarmaDetectorScreen::onRender()
 
   sp.pushSprite(bodyX(), bodyY());
   sp.deleteSprite();
+#endif
 }
 
 void WifiKarmaDetectorScreen::onBack()

@@ -84,7 +84,43 @@ void ScreenStreamCore::_start(uint8_t seq) {
 
 void ScreenStreamCore::_sink(void* ctx, uint8_t type, const uint8_t* data, uint32_t len) {
   ScreenStreamCore* self = static_cast<ScreenStreamCore*>(ctx);
+  // Compress frame regions before they hit the wire — the CDC TX path drains
+  // at ~64 KB/s, so raw RGB565 regions cap full-screen updates at <1 fps.
+  if (type == ScreenProto::T_FRAME && len > 16) {
+    uint32_t rleLen = self->_rleEncode(data, len);
+    if (rleLen) {
+      self->sendFrame(ScreenProto::CTX, ScreenProto::T_FRAME_RLE, self->_seq, self->_rle, rleLen);
+      return;
+    }
+  }
   self->sendFrame(ScreenProto::CTX, type, self->_seq, data, len);
+}
+
+uint32_t ScreenStreamCore::_rleEncode(const uint8_t* data, uint32_t len) {
+  const uint32_t need = (len - 8) * 2 + 8;   // worst case: every pixel unique
+  if (!_rle || _rleCap < need) {
+    uint8_t* grown = (uint8_t*)realloc(_rle, need);
+    if (!grown) return 0;                    // OOM — fall back to raw frame
+    _rle = grown;
+    _rleCap = need;
+  }
+  // Rect header passes through untouched: [x:2][y:2][w:2][h:2] LE.
+  memcpy(_rle, data, 8);
+  uint32_t out = 8, i = 8;
+  while (i + 1 < len) {
+    const uint8_t c0 = data[i], c1 = data[i + 1];   // wire order (big-endian)
+    uint32_t run = 1;
+    while (run < 0xFFFF && i + run * 2 + 1 < len &&
+           data[i + run * 2] == c0 && data[i + run * 2 + 1] == c1) {
+      run++;
+    }
+    _rle[out++] = c0;
+    _rle[out++] = c1;
+    _rle[out++] = (uint8_t)run;
+    _rle[out++] = (uint8_t)(run >> 8);
+    i += run * 2;
+  }
+  return (out + 4 < len) ? out : 0;   // only ship when clearly smaller
 }
 
 void ScreenStreamCore::stop() {

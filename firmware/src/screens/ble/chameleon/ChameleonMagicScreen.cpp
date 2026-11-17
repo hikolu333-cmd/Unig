@@ -41,12 +41,23 @@ void ChameleonMagicScreen::onRender() {
     return;
   }
   if (_phase == RESULT) {
+#ifdef USE_LVGL_SHELL
+    if (!_lblResult) {
+      TagPrompt::clear();
+      _lblResult = lv_label_create(LvglUi::viewParent());
+      lv_obj_set_style_text_font(_lblResult, &lv_font_montserrat_14, 0);
+      lv_obj_set_style_text_color(_lblResult, lv_color_white(), 0);
+      lv_obj_center(_lblResult);
+    }
+    lv_label_set_text(_lblResult, _result.c_str());
+#else
     auto& lcd = Uni.Lcd;
     lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
     lcd.setTextDatum(MC_DATUM);
     lcd.setTextSize(1);
     lcd.setTextColor(TFT_WHITE, TFT_BLACK);
     lcd.drawString(_result, bodyX() + bodyW() / 2, bodyY() + bodyH() / 2);
+#endif
   }
 }
 

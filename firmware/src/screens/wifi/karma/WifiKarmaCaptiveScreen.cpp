@@ -4,6 +4,7 @@
 #include "core/AchievementManager.h"
 #include "screens/wifi/WifiMenuScreen.h"
 #include "ui/actions/ShowStatusAction.h"
+#include "ui/components/TempBadge.h"
 #include "ui/actions/InputNumberAction.h"
 #include "utils/StorageUtil.h"
 
@@ -106,9 +107,11 @@ void WifiKarmaCaptiveScreen::onItemSelected(uint8_t index)
 void WifiKarmaCaptiveScreen::onUpdate()
 {
   if (_state != STATE_RUNNING) {
+    TempBadge::hideLv();
     ListScreen::onUpdate();
     return;
   }
+  TempBadge::drawLv();
 
   // ── Handle exit ───────────────────────────────────────────────────────────
   if (Uni.Nav->wasPressed()) {

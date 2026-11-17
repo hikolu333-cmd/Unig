@@ -241,7 +241,7 @@ void WikipediaScreen::_showMenu() {
 }
 
 void WikipediaScreen::_chooseLanguage() {
-  InputSelectAction::Option opts[kWikiLangCount];
+  InputSelectAction::Option opts[kWikiLangCount] = {};
   for (uint8_t i = 0; i < kWikiLangCount; i++) {
     opts[i].label = kWikiLangs[i].name;
     opts[i].value = kWikiLangs[i].code;

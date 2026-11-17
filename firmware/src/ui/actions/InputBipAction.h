@@ -26,6 +26,7 @@
 #include "core/ConfigManager.h"
 #include "utils/crypto/Bip39.h"
 #include "utils/crypto/Bip39Wordlist.h"
+#include "ui/lvgl/LvglUi.h"   // LvglUi::pump() is a no-op without USE_LVGL_SHELL
 
 class InputBipAction
 {
@@ -199,6 +200,143 @@ private:
 
   // ── Drawing ────────────────────────────────────────────────────────────
 
+#ifdef USE_LVGL_SHELL
+  // ── LVGL mode: full-screen overlay, cells as abs-positioned buttons ──────
+  // Cell grid geometry changes between letter and word mode, so _drawAll()
+  // rebuilds the cell buttons; _drawCell(idx) updates one cell in place.
+  lv_obj_t* _lvCard  = nullptr;
+  lv_obj_t* _lvTitle = nullptr;
+  lv_obj_t* _lvInfo  = nullptr;
+  lv_obj_t* _lvInput = nullptr;
+  lv_obj_t* _lvCells[MAX_CELLS] = {};
+  bool      _lvCellsBuilt = false;
+
+  void _lvBuild() {
+    LvglUi::ensure();
+    _lvCard = LvglUi::overlay();
+
+    _lvTitle = lv_label_create(_lvCard);
+    lv_obj_set_pos(_lvTitle, PAD, PAD);
+    lv_obj_set_style_text_color(_lvTitle, LvglUi::c565(TFT_YELLOW), 0);
+    lv_label_set_text(_lvTitle, _title);
+
+    _lvInfo = lv_label_create(_lvCard);
+    lv_obj_set_pos(_lvInfo, PAD, HDR_INFO_Y);
+    lv_obj_set_width(_lvInfo, Uni.Lcd.width() - PAD * 2);
+    lv_label_set_long_mode(_lvInfo, LV_LABEL_LONG_DOT);
+    lv_label_set_text(_lvInfo, "");
+
+    lv_obj_t* inpBox = lv_obj_create(_lvCard);
+    lv_obj_set_pos(inpBox, PAD, HDR_INP_Y);
+    lv_obj_set_size(inpBox, Uni.Lcd.width() - PAD * 2, INP_H);
+    lv_obj_set_style_bg_opa(inpBox, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_color(inpBox, LvglUi::c565(TFT_DARKGREY), 0);
+    lv_obj_set_style_border_width(inpBox, 1, 0);
+    lv_obj_set_style_radius(inpBox, 2, 0);
+    lv_obj_set_style_pad_all(inpBox, 0, 0);
+    lv_obj_clear_flag(inpBox, LV_OBJ_FLAG_SCROLLABLE);
+
+    _lvInput = lv_label_create(inpBox);
+    lv_obj_set_pos(_lvInput, 3, 1);
+    lv_obj_set_width(_lvInput, Uni.Lcd.width() - PAD * 2 - 6);
+    lv_label_set_long_mode(_lvInput, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(_lvInput, lv_color_white(), 0);
+    lv_label_set_text(_lvInput, "");
+  }
+
+  void _lvClose() {
+    if (_lvCard) {
+      lv_obj_del(_lvCard);
+      _lvCard = nullptr;
+      for (int i = 0; i < MAX_CELLS; i++) _lvCells[i] = nullptr;
+      _lvCellsBuilt = false;
+      LvglUi::repaintScreen();
+    }
+  }
+
+  void _drawAll() {
+    if (!_lvCard) _lvBuild();
+    lv_label_set_text(_lvTitle, _title);
+    _drawInfo();
+    _drawInput();
+
+    // (Re)build the cell grid — geometry changes between letter/word mode.
+    for (int i = 0; i < MAX_CELLS; i++) {
+      if (_lvCells[i]) { lv_obj_del(_lvCells[i]); _lvCells[i] = nullptr; }
+    }
+    for (int i = 0; i < _cellCount; i++) {
+      int col = i % _gridCols();
+      int row = i / _gridCols();
+      lv_obj_t* cell = lv_btn_create(_lvCard);
+      lv_obj_set_pos(cell, col * _gridCellW() + 1, HDR_H + row * _gridCellH() + 1);
+      lv_obj_set_size(cell, _gridCellW() - 2, _gridCellH() - 2);
+      LvglUi::styleKey(cell);
+      lv_obj_clear_flag(cell, LV_OBJ_FLAG_SCROLLABLE);
+
+      lv_obj_t* lbl = lv_label_create(cell);
+      lv_obj_center(lbl);
+      lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+      lv_label_set_text(lbl, "");
+      _lvCells[i] = cell;
+    }
+    _lvCellsBuilt = true;
+
+    for (int i = 0; i < _cellCount; i++) _drawCell(i);
+    LvglUi::pump();
+  }
+
+  void _drawInput() {
+    if (_lvInput) lv_label_set_text(_lvInput, _input.length() ? _input.c_str() : " ");
+  }
+
+  void _drawInfo() {
+    if (!_lvInfo) return;
+    if (_error.length() > 0) {
+      lv_obj_set_style_text_color(_lvInfo, LvglUi::c565(TFT_RED), 0);
+      lv_label_set_text(_lvInfo, _error.c_str());
+    } else if (_mode == MODE_WORD) {
+      lv_obj_set_style_text_color(_lvInfo, LvglUi::c565(TFT_GREEN), 0);
+      String s = String(_matchCount) + " match" + (_matchCount == 1 ? "" : "es") + " - pick";
+      lv_label_set_text(_lvInfo, s.c_str());
+    } else if (_input.length() > 0) {
+      lv_obj_set_style_text_color(_lvInfo, LvglUi::c565(TFT_DARKGREY), 0);
+      String s = String(_matchCount) + " words match";
+      lv_label_set_text(_lvInfo, s.c_str());
+    } else {
+      lv_obj_set_style_text_color(_lvInfo, LvglUi::c565(TFT_DARKGREY), 0);
+      lv_label_set_text(_lvInfo, "Pick first letter");
+    }
+  }
+
+  void _drawCell(int idx) {
+    if (idx < 0 || idx >= _cellCount) return;
+    lv_obj_t* cell = _lvCells[idx];
+    if (!cell) return;
+    const Cell& c = _cells[idx];
+
+    if (c.kind == Cell::KIND_NONE) {
+      lv_obj_add_flag(cell, LV_OBJ_FLAG_HIDDEN);
+      return;
+    }
+    lv_obj_clear_flag(cell, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t* lbl = lv_obj_get_child(cell, 0);
+    if (lbl) {
+      lv_label_set_text(lbl, c.label);
+      // Label colour: actions cyan, words green, letters light grey —
+      // matching the legacy palette (focused styling comes from styleKey).
+      uint16_t fg = (c.kind == Cell::KIND_DEL || c.kind == Cell::KIND_CANCEL)
+                    ? TFT_CYAN
+                    : (c.kind == Cell::KIND_WORD ? TFT_GREEN : TFT_LIGHTGREY);
+      lv_obj_set_style_text_color(lbl, LvglUi::c565(fg), 0);
+    }
+
+    if (idx == _scrollPos) lv_obj_add_state(cell, LV_STATE_FOCUSED);
+    else                   lv_obj_clear_state(cell, LV_STATE_FOCUSED);
+  }
+
+#else
+  // ── legacy TFT mode ──────────────────────────────────────────────────────
   void _drawAll() {
     auto& lcd = Uni.Lcd;
     // fillScreen also handles letter→word grid shrink (the prior layout's
@@ -292,6 +430,7 @@ private:
     sp.pushSprite(col * cW, HDR_H + row * cH);
     sp.deleteSprite();
   }
+#endif // USE_LVGL_SHELL
 
   // ── Input handling ─────────────────────────────────────────────────────
 
@@ -514,6 +653,7 @@ private:
       Uni.update();
       UartFM.poll(); // read remote input so nav works in this dialog
       if (Mirror.dirty()) Mirror.pump(); // flush only when this overlay redrew
+      LvglUi::pump();
 
 #ifdef DEVICE_HAS_TOUCH_NAV
       // Hover-highlight: while a finger is currently on the grid, snap the
@@ -594,7 +734,11 @@ private:
       delay(10);
     }
 
+#ifdef USE_LVGL_SHELL
+    _lvClose();
+#else
     Uni.Lcd.fillScreen(TFT_BLACK);
+#endif
     return _cancelled ? -1 : _suggestIdx;
   }
 };

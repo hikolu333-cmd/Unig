@@ -971,8 +971,19 @@ static const MoodArtFace* _pickFace(MoodFace::Mood mood, uint8_t variant) {
 }
 
 void WifiUnigotchiScreen::onRender() {
+#ifdef USE_LVGL_SHELL
+  const int bx = 0, by = 0;
+  const int bw = bodyW(), bh = bodyH();
+  if (!_scene.ensure(Uni.Lcd, bw, bh)) return;
+  _spr = &_scene.sprite();
+#else
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // scene renders into the canvas sprite
+#else
   auto& lcd = Uni.Lcd;
+#endif
   const int bx = bodyX(), by = bodyY(), bw = bodyW(), bh = bodyH();
+#endif
   const int ts    = bw < 320 ? 1 : 2;
   const int lineH = ts * 9;
 
@@ -982,7 +993,14 @@ void WifiUnigotchiScreen::onRender() {
   const int bh0   = bh - topH - statH;
   const int statY = by + bh - statH;
 
-  if (_firstRender) { lcd.fillRect(bx, by, bw, bh, TFT_BLACK); _firstRender = false; _dirty = D_ALL; }
+  if (_firstRender) {
+#ifdef USE_LVGL_SHELL
+    _spr->fillRect(bx, by, bw, bh, TFT_BLACK);
+#else
+    lcd.fillRect(bx, by, bw, bh, TFT_BLACK);
+#endif
+    _firstRender = false; _dirty = D_ALL;
+  }
 
   if (_dirty & D_TOP)   { _drawTop(bx, by, bw);        _dirty &= ~D_TOP; }
   if (_dirty & D_BODY)  {
@@ -991,11 +1009,19 @@ void WifiUnigotchiScreen::onRender() {
     _dirty &= ~D_BODY;
   }
   if (_dirty & D_STATS) { _drawStats(bx, statY, bw);   _dirty &= ~D_STATS; }
+
+#ifdef USE_LVGL_SHELL
+  _scene.flush();
+#endif
 }
 
 // Top: AP / CH (left) + UP (right), then a separator line. Plain white.
 void WifiUnigotchiScreen::_drawTop(int bx, int by, int bw) {
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // scene renders into the canvas sprite
+#else
   auto& lcd = Uni.Lcd;
+#endif
   const int ts = bw < 320 ? 1 : 2, lineH = ts * 9;
   lcd.fillRect(bx, by, bw, lineH + 4, TFT_BLACK);
   lcd.setTextSize(ts);
@@ -1011,7 +1037,11 @@ void WifiUnigotchiScreen::_drawTop(int bx, int by, int bw) {
 // Centred block: "Unigotchi> Lvl N" (bigger) + left-aligned face + message.
 // Everything white (pwnagotchi look).
 void WifiUnigotchiScreen::_drawBody(int bx, int by, int bw, int h) {
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // scene renders into the canvas sprite
+#else
   auto& lcd = Uni.Lcd;
+#endif
   const int ts = bw < 320 ? 1 : 2, lineH = ts * 9;
   const int hts = ts + 1, hLineH = hts * 9;   // header a bit bigger
   const int gap = 4;
@@ -1061,7 +1091,11 @@ void WifiUnigotchiScreen::_drawBody(int bx, int by, int bw, int h) {
 // the same centre body the face would occupy. The top status line and the
 // bottom counters are already plain text and shared with the gotchi style.
 void WifiUnigotchiScreen::_drawBodyText(int bx, int by, int bw, int h) {
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // scene renders into the canvas sprite
+#else
   auto& lcd = Uni.Lcd;
+#endif
   const int ts = bw < 320 ? 1 : 2, lineH = ts * 9;
   lcd.fillRect(bx, by, bw, h, TFT_BLACK);
   lcd.setTextSize(ts);
@@ -1085,7 +1119,11 @@ void WifiUnigotchiScreen::_drawBodyText(int bx, int by, int bw, int h) {
 
 // Bottom: counters (left) + mode (right). Plain white.
 void WifiUnigotchiScreen::_drawStats(int bx, int by, int bw) {
+#ifdef USE_LVGL_SHELL
+  auto& lcd = *_spr;   // scene renders into the canvas sprite
+#else
   auto& lcd = Uni.Lcd;
+#endif
   const int ts = bw < 320 ? 1 : 2, lineH = ts * 9;
   lcd.fillRect(bx, by, bw, lineH + 4, TFT_BLACK);
   lcd.drawFastHLine(bx, by, bw, UG_INK);        // separator above the counters

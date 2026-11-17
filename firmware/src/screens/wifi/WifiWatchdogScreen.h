@@ -9,6 +9,9 @@
 
 #include "ui/templates/BaseScreen.h"
 #include "ui/views/ScrollListView.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/LvglUi.h"
+#endif
 
 class WifiWatchdogScreen : public BaseScreen
 {
@@ -137,6 +140,13 @@ private:
   int                 _prevCounts[4]    = {-1, -1, -1, -1};
   int                 _karmaBaseline    = 0;
   ScrollListView      _scroll;
+#ifdef USE_LVGL_SHELL
+  // 2×2 overview grid as persistent widgets; hidden while a detail list is up.
+  lv_obj_t* _cells[4]        = {};
+  lv_obj_t* _cellCntLbl[4]   = {};
+  lv_obj_t* _lblEmpty        = nullptr;
+  void _gridSetVisible(bool visible);
+#endif
   ScrollListView::Row _rows[MAX_ROWS]          = {};
   char                _labels[MAX_ROWS][64]    = {};
   char                _sublabels[MAX_ITEMS][64] = {};

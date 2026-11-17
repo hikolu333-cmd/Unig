@@ -15,6 +15,9 @@ namespace {
 bool        s_init = false;
 lv_style_t s_styleRow;
 lv_style_t s_styleRowFocus;
+lv_obj_t*  s_currentRoot = nullptr;   // newest pageRoot() still alive
+lv_obj_t*  s_viewBody    = nullptr;   // opaque body surface on the current root
+int        s_viewY       = 0;         // page body top: 34 with a title, 0 without
 
 lv_color_t _accent() {
   uint16_t c = Config.getThemeColor();
@@ -40,6 +43,8 @@ namespace LvglUi
 
 void ensure() {
   if (s_init) return;
+#ifdef USB_REMOTE_AUTOSTART
+#endif
 
   lv_init();
 
@@ -80,6 +85,8 @@ void ensure() {
   lv_style_set_border_width(&s_styleRowFocus, 2);
   lv_style_set_text_color(&s_styleRowFocus, lv_color_black());
 
+#ifdef USB_REMOTE_AUTOSTART
+#endif
   s_init = true;
 }
 
@@ -102,7 +109,82 @@ lv_obj_t* pageRoot(const char* title) {
     lv_obj_set_style_text_color(t, _accent(), 0);
     lv_label_set_text(t, title);
   }
+  s_currentRoot = root;
+  s_viewY = title ? 34 : 0;
   return root;
+}
+
+lv_obj_t* currentRoot() {
+  return s_currentRoot ? s_currentRoot : lv_scr_act();
+}
+
+void forgetRoot(lv_obj_t* root) {
+  if (s_currentRoot == root) {
+    s_currentRoot = nullptr;
+    // The body surface was a child of the page root — it died with it.
+    s_viewBody = nullptr;
+  }
+}
+
+lv_obj_t* viewParent() {
+  lv_obj_t* root = currentRoot();
+  if (s_viewBody && lv_obj_get_parent(s_viewBody) != root) s_viewBody = nullptr;
+  if (!s_viewBody) {
+    s_viewBody = lv_obj_create(root);
+    lv_obj_set_pos(s_viewBody, 0, s_viewY);
+    lv_obj_set_size(s_viewBody, Uni.Lcd.width(), Uni.Lcd.height() - s_viewY);
+    lv_obj_set_style_bg_color(s_viewBody, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_viewBody, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_viewBody, 0, 0);
+    lv_obj_set_style_pad_all(s_viewBody, 0, 0);
+    lv_obj_clear_flag(s_viewBody, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(s_viewBody, LV_SCROLLBAR_MODE_OFF);
+  }
+  lv_obj_clear_flag(s_viewBody, LV_OBJ_FLAG_HIDDEN);
+  return s_viewBody;
+}
+
+void viewParentHide() {
+  if (s_viewBody) lv_obj_add_flag(s_viewBody, LV_OBJ_FLAG_HIDDEN);
+}
+
+int viewOffsetY() {
+  return s_viewY;
+}
+
+void pump() {
+  if (s_init) lv_timer_handler();
+}
+
+lv_obj_t* overlay() {
+  ensure();
+  lv_obj_t* ov = lv_obj_create(lv_layer_top());
+  lv_obj_set_pos(ov, 0, 0);
+  lv_obj_set_size(ov, Uni.Lcd.width(), Uni.Lcd.height());
+  lv_obj_set_style_bg_color(ov, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(ov, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(ov, 0, 0);
+  lv_obj_set_style_pad_all(ov, 0, 0);
+  lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(ov, LV_SCROLLBAR_MODE_OFF);
+  return ov;
+}
+
+void repaintScreen() {
+  if (!s_init) return;
+  lv_obj_invalidate(lv_scr_act());
+  lv_timer_handler();
+}
+
+void styleKey(lv_obj_t* key) {
+  styleRow(key);
+  lv_obj_set_style_radius(key, 4, 0);
+}
+
+lv_color_t c565(uint16_t c) {
+  return lv_color_make((uint8_t)(((c >> 11) & 0x1F) * 255 / 31),
+                       (uint8_t)(((c >> 5) & 0x3F) * 255 / 63),
+                       (uint8_t)((c & 0x1F) * 255 / 31));
 }
 
 lv_obj_t* makeList(lv_obj_t* root) {

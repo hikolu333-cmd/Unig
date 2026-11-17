@@ -2,6 +2,9 @@
 
 #include "ui/templates/BaseScreen.h"
 #include "utils/ble/BleSpamUtil.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/LvglUi.h"
+#endif
 
 // Runs the BLE spam engine for a chosen attack/device and shows live status.
 class BLESpamRunScreen : public BaseScreen {
@@ -24,4 +27,10 @@ private:
   uint32_t _lastTickMs  = 0;
   uint32_t _lastDrawMs  = 0;
   bool     _chromeDrawn = false;
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* _lblAttack = nullptr;  // attack name (green)
+  lv_obj_t* _lblDev    = nullptr;  // device label (grey)
+  lv_obj_t* _lblCfg    = nullptr;  // "TX:…  MAC:…" (grey)
+  lv_obj_t* _lblRun    = nullptr;  // spinner + packet counter (yellow)
+#endif
 };

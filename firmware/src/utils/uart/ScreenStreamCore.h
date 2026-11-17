@@ -28,6 +28,11 @@ private:
   uint8_t _rxBuf[kRxCap + 1];
   uint8_t _seq = 0;
 
+  // RLE scratch for T_FRAME_RLE (lazily grown, worst case 2x frame).
+  uint8_t*  _rle    = nullptr;
+  uint32_t  _rleCap = 0;
+
   void        _start(uint8_t seq);
   static void _sink(void* ctx, uint8_t type, const uint8_t* data, uint32_t len);
+  uint32_t    _rleEncode(const uint8_t* data, uint32_t len); // 0 = not worth it
 };

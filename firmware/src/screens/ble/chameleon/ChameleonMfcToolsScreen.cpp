@@ -139,7 +139,7 @@ void ChameleonMfcToolsScreen::_writeFromSlot() {
     return;
   }
 
-  InputSelectAction::Option opts[8];
+  InputSelectAction::Option opts[8] = {};
   String labels[8];
   String vals[8];
   for (uint8_t i = 0; i < 8; ++i) {

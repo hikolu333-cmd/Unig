@@ -203,6 +203,8 @@ static void _mbedtlsPsramFree(void* p) {
 }
 
 void setup() {
+#ifdef USB_REMOTE_AUTOSTART
+#endif
   // Default 256-byte RX FIFO for now — only grown below if the Serial File
   // Manager is enabled, since that's the only consumer that needs it.
   Serial.begin(115200);
@@ -214,6 +216,8 @@ void setup() {
   Serial0.begin(115200);
 #endif
   delay(200);
+#ifdef USB_REMOTE_AUTOSTART
+#endif
 
   if (psramFound()) {
     mbedtls_platform_set_calloc_free(_mbedtlsPsramCalloc, _mbedtlsPsramFree);
@@ -230,18 +234,39 @@ void setup() {
   }
 #endif
   Uni.begin();
+#ifdef USB_REMOTE_AUTOSTART
+#endif
 
   Uni.initStorage();
+#ifdef USB_REMOTE_AUTOSTART
+#endif
 
   Config.load(Uni.Storage);   // load early so optional services can be gated
+#ifdef USB_REMOTE_AUTOSTART
+#endif
 
   // USB Remote (HID → USB Remote) and BLE Remote Device are both live toggles
   // started from their menus, not at boot — see UartFM/BleFM. They share the
   // ScreenMirror master gate, which defaults off.
+#ifdef USB_REMOTE_AUTOSTART
+  // "Mac remote" build (diy_joystick_remote): USB Remote — screen mirror +
+  // keyboard/joystick input over USB — is on from boot, so plugging into a
+  // computer and running the host mirror script works without navigating
+  // the device menus first. The stream itself still starts on the host's
+  // START command (M key in the mirror script). Mirror's master gate is part
+  // of the deal — the menu toggles set it next to UartFM.begin(), so the
+  // boot path must set it too or Mirror.start() would refuse.
+  UartFM.begin(true, true);
+  Mirror.setEnabled(true);
+#endif
 #ifdef DEVICE_HAS_RTC
   RtcManager::syncSystemFromRtc();
 #endif
+#ifdef USB_REMOTE_AUTOSTART
+#endif
   _bootSplash();
+#ifdef USB_REMOTE_AUTOSTART
+#endif
 
 #ifdef DEVICE_CYD
   if (Config.get(APP_CONFIG_TOUCH_CALIBRATED, APP_CONFIG_TOUCH_CALIBRATED_DEFAULT) == "0")
@@ -258,11 +283,21 @@ void setup() {
 #else
   Screen.setScreen(new CharacterScreen());
 #endif
+#ifdef USB_REMOTE_AUTOSTART
+#endif
 }
 
 void loop() {
   Uni.update();
   UartFM.update();
+#ifdef USB_REMOTE_AUTOSTART
+  {
+    static uint32_t s_hb = 0;
+    if (millis() - s_hb > 3000) {
+      s_hb = millis();
+    }
+  }
+#endif
   BleFM.update();   // background BLE Remote Device (no-op while toggled off)
 
   // ── Power saving ──────────────────────────────────────────────────────────

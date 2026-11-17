@@ -221,7 +221,7 @@ void UartTerminalScreen::_configNetwork() {
   int n = WifiUtility::scan(nets, WifiUtility::MAX_WIFI);
   if (n == 0) { ShowStatusAction::show("No networks found", 1500); render(); return; }
 
-  InputSelectAction::Option opts[WifiUtility::MAX_WIFI];
+  InputSelectAction::Option opts[WifiUtility::MAX_WIFI] = {};
   for (int i = 0; i < n; i++) {
     opts[i] = {nets[i].ssid, nets[i].ssid, nets[i].bssid, nets[i].rssi, true};
   }

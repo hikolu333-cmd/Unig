@@ -9,6 +9,11 @@ public:
   // pass nullptr to hide header entirely
   void render(const char* title) {
     if (!title) return;
+#ifdef USE_LVGL_SHELL
+    // LVGL mode: the shell owns the page chrome — a raw sprite push here
+    // would scribble over the LVGL framebuffer.
+    return;
+#endif
 
     auto& lcd = Uni.Lcd;
     const uint16_t w = lcd.width() - StatusBar::WIDTH;

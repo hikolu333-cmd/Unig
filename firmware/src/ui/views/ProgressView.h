@@ -4,7 +4,13 @@
 #include "core/ConfigManager.h"
 #include "ui/components/StatusBar.h"
 #include "ui/components/Header.h"
+#include "ui/lvgl/LvglUi.h"   // LvglUi::pump() is a no-op without USE_LVGL_SHELL
 
+// Three-stage inline progress indicator (message + bar in the body area).
+// Dual-mode:
+//  - legacy: sprite-composited text + incremental bar fill on the panel;
+//  - USE_LVGL_SHELL: an lv_label + lv_bar panel on the current page root —
+//    LVGL wraps the message text by itself, so the manual wrap is legacy-only.
 class ProgressView
 {
 public:
@@ -12,9 +18,7 @@ public:
   // sequence of progress() calls.
   static void init() { _get()._init(); }
 
-  // Stage 2: Update label text and bar fill. Text is composited into a
-  // sprite and pushed atomically — no flicker even when message changes
-  // every call (e.g. download loops). Bar fill is incremental (delta only).
+  // Stage 2: Update label text and bar fill.
   // If init() was not called, calls it automatically.
   static void progress(const char* message, uint8_t percent) {
     _get()._progress(message, percent);
@@ -24,6 +28,85 @@ public:
   static void finish() { _get()._finish(); }
 
 private:
+#ifdef USE_LVGL_SHELL
+  static constexpr int BAR_H   = 12;
+  static constexpr int PAD     = 8;
+
+  lv_obj_t* _panel = nullptr;
+  lv_obj_t* _label = nullptr;
+  lv_obj_t* _bar   = nullptr;
+
+  static ProgressView& _get() {
+    static ProgressView inst;
+    return inst;
+  }
+
+  void _init() {
+    LvglUi::ensure();
+    _teardown();
+
+    int w = Uni.Lcd.width() - 16;
+    _panel = lv_obj_create(LvglUi::viewParent());
+    // viewParent() already sits below the page title.
+    lv_obj_set_pos(_panel, 8, 0);
+    lv_obj_set_size(_panel, w, Uni.Lcd.height() - LvglUi::viewOffsetY() - 8);
+    lv_obj_set_style_bg_opa(_panel, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_panel, 0, 0);
+    lv_obj_set_style_pad_all(_panel, 0, 0);
+    lv_obj_clear_flag(_panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    _label = lv_label_create(_panel);
+    lv_obj_set_width(_label, w - PAD * 2);
+    lv_obj_align(_label, LV_ALIGN_TOP_MID, 0, 16);
+    lv_label_set_long_mode(_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(_label, lv_color_white(), 0);
+    lv_label_set_text(_label, "");
+
+    _bar = lv_bar_create(_panel);
+    lv_obj_set_size(_bar, w - PAD * 2, BAR_H);
+    lv_obj_align(_bar, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_bar_set_range(_bar, 0, 100);
+    lv_bar_set_value(_bar, 0, LV_ANIM_OFF);
+
+    lv_timer_handler();
+  }
+
+  void _progress(const char* message, uint8_t percent) {
+    if (!_panel) _init();
+
+    if (message) lv_label_set_text(_label, message);
+    lv_bar_set_value(_bar, percent, LV_ANIM_OFF);
+    lv_timer_handler();
+  }
+
+  void _finish() {
+    if (!_panel) return;
+    // Sweep the remaining fill up to 100% in a few short steps so the bar is
+    // always seen completing, even when the caller immediately redraws the
+    // body (menu, status overlay) right after the operation finishes.
+    int v = lv_bar_get_value(_bar);
+    const int steps = 6;
+    for (int s = 1; s <= steps; s++) {
+      int target = v + (100 - v) * s / steps;
+      lv_bar_set_value(_bar, target, LV_ANIM_OFF);
+      lv_timer_handler();
+      delay(18);
+    }
+    _teardown();
+  }
+
+  void _teardown() {
+    if (_panel) {
+      lv_obj_del(_panel);
+      _panel = nullptr;
+      _label = nullptr;
+      _bar   = nullptr;
+      LvglUi::repaintScreen();
+    }
+  }
+
+#else // ── legacy TFT mode ───────────────────────────────────────────────────
   static constexpr int BAR_H     = 10;
   static constexpr int BAR_PAD   = 8;
   static constexpr int LINE_H    = 12;
@@ -187,4 +270,5 @@ private:
     _lastFillW = innerW;
     _chromeDrawn = false;
   }
+#endif
 };

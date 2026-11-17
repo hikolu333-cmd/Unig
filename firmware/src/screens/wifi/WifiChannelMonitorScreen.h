@@ -5,6 +5,9 @@
 #include <atomic>
 
 #include "ui/templates/BaseScreen.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/LvglUi.h"
+#endif
 
 class WifiChannelMonitorScreen : public BaseScreen
 {
@@ -39,4 +42,9 @@ private:
 
   void _hop();
   void _quit();
+
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* _bars[_NUM_CH + 1] = {};  // one bar per channel (bottom-aligned)
+  lv_obj_t* _lblScan = nullptr;       // "Scanning..." overlay (first sweep)
+#endif
 };

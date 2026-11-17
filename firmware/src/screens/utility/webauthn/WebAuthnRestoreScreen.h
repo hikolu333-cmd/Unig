@@ -5,6 +5,9 @@
 #ifdef DEVICE_HAS_WEBAUTHN
 
 #include "ui/templates/BaseScreen.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/LvglUi.h"
+#endif
 
 // Restore the FIDO master key from a 24-word BIP-39 mnemonic.
 //
@@ -56,6 +59,12 @@ private:
   void _drawConfirm();
   void _drawDone();
   void _drawError();
+
+#ifdef USE_LVGL_SHELL
+  // Full-body opaque page layer — cleaned and rebuilt on every state draw.
+  lv_obj_t* _layer = nullptr;
+  lv_obj_t* _lvEnsureLayer();
+#endif
 };
 
 #endif  // DEVICE_HAS_WEBAUTHN

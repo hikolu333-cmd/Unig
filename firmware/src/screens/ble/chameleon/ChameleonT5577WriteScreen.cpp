@@ -259,7 +259,7 @@ void ChameleonT5577WriteScreen::_fromSlot() {
   auto& c = ChameleonClient::get();
   ChameleonClient::SlotTypes types[8] = {};
   if (!c.getSlotTypes(types)) { render(); ShowStatusAction::show("Failed", 1600); render(); return; }
-  InputSelectAction::Option opts[8]; String labels[8], vals[8]; uint8_t slots[8] = {}, count = 0;
+  InputSelectAction::Option opts[8] = {}; String labels[8], vals[8]; uint8_t slots[8] = {}, count = 0;
   for (uint8_t i = 0; i < 8; ++i) {
     if (!LFCodec::isSupportedT5577(types[i].lfType)) continue;
     labels[count] = String("Slot ") + String(i + 1) + " - " + ChameleonClient::tagTypeName(types[i].lfType);

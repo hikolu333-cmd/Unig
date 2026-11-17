@@ -146,6 +146,41 @@ void WebAuthnBackupScreen::onRender()
 
 void WebAuthnBackupScreen::_drawWarning()
 {
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* l = _lvEnsureLayer();
+  lv_obj_t* lab;
+
+  lab = lv_label_create(l);
+  lv_obj_set_style_text_font(lab, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(lab, LvglUi::c565(TFT_RED), 0);
+  lv_obj_align(lab, LV_ALIGN_TOP_MID, 0, 6);
+  lv_label_set_text(lab, "WARNING");
+
+  const char* grey1[] = {"24 words below back up the", "FIDO master key."};
+  const char* yellow[] = {"Anyone who sees them can clone", "every passkey on this device."};
+  const char* grey2[] = {"Write them down on paper.", "Do NOT photograph or share."};
+
+  int y = 26;
+  auto addLines = [&](const char** lines, int n, uint16_t color, int step) {
+    for (int i = 0; i < n; i++) {
+      lv_obj_t* t = lv_label_create(l);
+      lv_obj_set_style_text_font(t, &lv_font_montserrat_14, 0);
+      lv_obj_set_style_text_color(t, LvglUi::c565(color), 0);
+      lv_obj_align(t, LV_ALIGN_TOP_MID, 0, y);
+      lv_label_set_text(t, lines[i]);
+      y += step;
+    }
+  };
+  addLines(grey1, 2, TFT_LIGHTGREY, 13);
+  y += 3; addLines(yellow, 2, TFT_YELLOW, 13);
+  y += 3; addLines(grey2, 2, TFT_LIGHTGREY, 13);
+
+  lv_obj_t* f = lv_label_create(l);
+  lv_obj_set_style_text_font(f, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(f, LvglUi::c565(TFT_GREEN), 0);
+  lv_obj_align(f, LV_ALIGN_BOTTOM_MID, 0, -4);
+  lv_label_set_text(f, "[Press] Continue / [Back] Cancel");
+#else
   auto& lcd = Uni.Lcd;
   lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
   lcd.setTextSize(1);
@@ -172,14 +207,22 @@ void WebAuthnBackupScreen::_drawWarning()
   lcd.setTextDatum(BC_DATUM);
   lcd.drawString("[Press] Continue / [Back] Cancel",
                  cx, bodyY() + bodyH() - 4);
+#endif
 }
 
 WebAuthnBackupScreen::Layout WebAuthnBackupScreen::_layout()
 {
   Layout L;
+#ifdef USE_LVGL_SHELL
+  // montserrat_14 rows are taller than font-1 rows.
+  L.rowH    = 16;
+  L.headerH = 20;
+  L.footerH = 20;
+#else
   L.rowH    = 14;
   L.headerH = 18;
   L.footerH = 18;
+#endif
 
   int16_t avail = (int16_t)bodyH() - L.headerH - L.footerH;
   if (avail < L.rowH) avail = L.rowH;
@@ -202,11 +245,54 @@ WebAuthnBackupScreen::Layout WebAuthnBackupScreen::_layout()
 
 void WebAuthnBackupScreen::_drawWords()
 {
+  Layout L = _layout();
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* lay = _lvEnsureLayer();
+
+  char hdr[24];
+  snprintf(hdr, sizeof(hdr), "Page %u / %u",
+           (unsigned)(_page + 1), (unsigned)L.pageCount);
+  lv_obj_t* hl = lv_label_create(lay);
+  lv_obj_set_style_text_font(hl, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(hl, LvglUi::c565(TFT_DARKGREY), 0);
+  lv_obj_align(hl, LV_ALIGN_TOP_MID, 0, 2);
+  lv_label_set_text(hl, hdr);
+
+  // Word grid (column-major within row → visual order 1,2 / 3,4 / ...)
+  const int colW = bodyW() / L.cols;
+  const int numPad = 30;
+  uint8_t base = _page * L.wordsPerPage;
+  for (uint8_t i = 0; i < L.wordsPerPage && (base + i) < kWordCount; i++) {
+    uint8_t row = (L.cols == 1) ? i : (i / L.cols);
+    uint8_t col = (L.cols == 1) ? 0 : (i %  L.cols);
+    const int x = col * colW + 8;
+    const int y = L.headerH + row * L.rowH;
+
+    char num[6];
+    snprintf(num, sizeof(num), "%2u.", (unsigned)(base + i + 1));
+    lv_obj_t* nl = lv_label_create(lay);
+    lv_obj_set_style_text_font(nl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(nl, LvglUi::c565(TFT_DARKGREY), 0);
+    lv_obj_set_pos(nl, x, y);
+    lv_label_set_text(nl, num);
+
+    lv_obj_t* wl = lv_label_create(lay);
+    lv_obj_set_style_text_font(wl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(wl, lv_color_white(), 0);
+    lv_obj_set_pos(wl, x + numPad, y);
+    lv_label_set_text(wl, unigeek::crypto::kBip39EnglishWordlist[_wordIdx[base + i]]);
+  }
+
+  lv_obj_t* f = lv_label_create(lay);
+  lv_obj_set_style_text_font(f, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(f, LvglUi::c565(TFT_DARKGREY), 0);
+  lv_obj_align(f, LV_ALIGN_BOTTOM_MID, 0, -4);
+  lv_label_set_text(f, _page + 1 < L.pageCount ? "[Press] Next" : "[Press] Finish");
+#else
   // Render off-screen into a body-sized sprite, then push in one blit so the
   // page transition is flicker-free. Page changes are rare (user button
   // press) so the per-render sprite alloc is fine — see screen-patterns
   // exemption for "whole body genuinely repaints" cases.
-  Layout L = _layout();
   Sprite sp(&Uni.Lcd);
   sp.createSprite(bodyW(), bodyH());
   sp.fillSprite(TFT_BLACK);
@@ -252,10 +338,29 @@ void WebAuthnBackupScreen::_drawWords()
 
   sp.pushSprite(bodyX(), bodyY());
   sp.deleteSprite();
+#endif
 }
 
 void WebAuthnBackupScreen::_drawDone()
 {
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* l = _lvEnsureLayer();
+
+  lv_obj_t* a = lv_label_create(l);
+  lv_obj_set_style_text_font(a, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(a, LvglUi::c565(TFT_GREEN), 0);
+  lv_obj_align(a, LV_ALIGN_CENTER, 0, -18);
+  lv_label_set_text(a, "All 24 words shown.");
+
+  const char* lines[] = {"Verify your written copy", "matches before exiting."};
+  for (int i = 0; i < 2; i++) {
+    lv_obj_t* t = lv_label_create(l);
+    lv_obj_set_style_text_font(t, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(t, LvglUi::c565(TFT_LIGHTGREY), 0);
+    lv_obj_align(t, LV_ALIGN_CENTER, 0, i * 14);
+    lv_label_set_text(t, lines[i]);
+  }
+#else
   auto& lcd = Uni.Lcd;
   lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
   lcd.setTextSize(1);
@@ -270,10 +375,19 @@ void WebAuthnBackupScreen::_drawDone()
   lcd.drawString("matches before exiting.",  cx, cy + 12);
   lcd.setTextDatum(BC_DATUM);
   lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
+#endif
 }
 
 void WebAuthnBackupScreen::_drawError()
 {
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* l = _lvEnsureLayer();
+  lv_obj_t* e = lv_label_create(l);
+  lv_obj_set_style_text_font(e, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(e, LvglUi::c565(TFT_RED), 0);
+  lv_obj_center(e);
+  lv_label_set_text(e, _err ? _err : "Denied");
+#else
   auto& lcd = Uni.Lcd;
   lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
   lcd.setTextSize(1);
@@ -284,10 +398,58 @@ void WebAuthnBackupScreen::_drawError()
   lcd.drawString(_err ? _err : "Denied", cx, cy);
   lcd.setTextDatum(BC_DATUM);
   lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
+#endif
 }
+
+#ifdef USE_LVGL_SHELL
+lv_obj_t* WebAuthnBackupScreen::_lvEnsureLayer()
+{
+  if (!_layer) {
+    _layer = lv_obj_create(LvglUi::viewParent());
+    lv_obj_set_pos(_layer, 0, 0);
+    lv_obj_set_size(_layer, bodyW(), bodyH());
+    lv_obj_set_style_bg_color(_layer, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(_layer, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_layer, 0, 0);
+    lv_obj_set_style_radius(_layer, 0, 0);
+    lv_obj_set_style_pad_all(_layer, 0, 0);
+    lv_obj_clear_flag(_layer, LV_OBJ_FLAG_SCROLLABLE);
+  } else {
+    lv_obj_clean(_layer);
+  }
+  return _layer;
+}
+#endif
 
 void WebAuthnBackupScreen::_drawNoMaster()
 {
+#ifdef USE_LVGL_SHELL
+  lv_obj_t* l = _lvEnsureLayer();
+
+  lv_obj_t* a = lv_label_create(l);
+  lv_obj_set_style_text_font(a, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(a, LvglUi::c565(TFT_YELLOW), 0);
+  lv_obj_align(a, LV_ALIGN_TOP_MID, 0, 8);
+  lv_label_set_text(a, "No master key yet");
+
+  const char* grey[] = {"Nothing to back up.", "Create one first via:"};
+  for (int i = 0; i < 2; i++) {
+    lv_obj_t* t = lv_label_create(l);
+    lv_obj_set_style_text_font(t, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(t, LvglUi::c565(TFT_LIGHTGREY), 0);
+    lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 26 + i * 14);
+    lv_label_set_text(t, grey[i]);
+  }
+
+  const char* cyan[] = {"Manage WebAuthn", ">  Generate BIP39"};
+  for (int i = 0; i < 2; i++) {
+    lv_obj_t* t = lv_label_create(l);
+    lv_obj_set_style_text_font(t, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(t, LvglUi::c565(TFT_CYAN), 0);
+    lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 56 + i * 13);
+    lv_label_set_text(t, cyan[i]);
+  }
+#else
   auto& lcd = Uni.Lcd;
   lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
   lcd.setTextSize(1);
@@ -308,6 +470,7 @@ void WebAuthnBackupScreen::_drawNoMaster()
 
   lcd.setTextDatum(BC_DATUM);
   lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
+#endif
 }
 
 #endif  // DEVICE_HAS_WEBAUTHN

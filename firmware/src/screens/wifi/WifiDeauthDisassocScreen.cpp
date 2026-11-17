@@ -5,6 +5,7 @@
 #include "screens/wifi/WifiMenuScreen.h"
 #include "utils/network/WifiAttackUtil.h"
 #include "ui/actions/ShowStatusAction.h"
+#include "ui/components/TempBadge.h"
 
 #include <WiFi.h>
 
@@ -320,6 +321,7 @@ void WifiDeauthDisassocScreen::_drawStatus(const char* msg)
 
   sp.pushSprite(bodyX(), cy - labelH / 2);
   sp.deleteSprite();
+  TempBadge::drawTft();
 }
 
 // ── Beacon callback ────────────────────────────────────────────────────────

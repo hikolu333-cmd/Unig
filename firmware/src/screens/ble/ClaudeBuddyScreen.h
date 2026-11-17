@@ -1,5 +1,8 @@
 #pragma once
 #include "ui/templates/BaseScreen.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/SpriteCanvas.h"
+#endif
 
 class ClaudeBuddyScreen : public BaseScreen {
 public:
@@ -50,4 +53,10 @@ private:
   void _pollBle();
   void _applyJson(const char* json);
   void _sendRaw(const char* json);
+
+#ifdef USE_LVGL_SHELL
+  // The whole scene (mascot art, buttons, dialog balloon, footer) is pixel
+  // art — drawn into a sprite and bridged to LVGL via a full-body canvas.
+  SpriteCanvas _scene;
+#endif
 };

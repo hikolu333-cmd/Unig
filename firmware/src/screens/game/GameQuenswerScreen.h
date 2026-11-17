@@ -1,6 +1,9 @@
 #pragma once
 
 #include "ui/templates/BaseScreen.h"
+#ifdef USE_LVGL_SHELL
+#include "ui/lvgl/SpriteCanvas.h"
+#endif
 
 // "Quenswer" — a two-player pass-the-device guessing game.
 //
@@ -70,4 +73,9 @@ private:
   void _renderHandoff();
   void _renderPlay();
   void _renderResult();
+
+#ifdef USE_LVGL_SHELL
+  // Every state renders the full body into a sprite — bridged via canvas.
+  SpriteCanvas _scene;
+#endif
 };
