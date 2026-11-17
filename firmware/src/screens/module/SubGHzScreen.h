@@ -121,12 +121,17 @@ private:
   // transmitting each code over RMT until the space is exhausted or the user
   // stops. Progress + current code are shown live.
   static constexpr int     STATE_BRUTEFORCE = STATE_USER_BASE + 3;
-  static constexpr uint8_t kBruteBatch      = 4;   // codes sent per update tick
+  static constexpr uint8_t kBruteBatch      = 20;  // codes sent per update tick
   uint8_t  _bruteSel      = 0;     // index into the protocol table (see .cpp)
   uint8_t  _bruteBits     = 12;    // code length swept
-  uint8_t  _bruteRepeat   = 3;     // frame repeats per code (1-5, configurable)
-  uint32_t _bruteKey      = 0;     // next code to transmit
+  uint8_t  _bruteRepeat   = 1;     // frame repeats per code (receivers decode frame 1)
+  bool     _bruteHot      = true;  // sweep order: hot zones vs plain sequential
+  uint8_t  _bruteZone     = 0;     // active zone (0=low, 1=hot, 2=top, 3=rest, 4=done)
+  uint32_t _brutePos      = 0;     // position inside the zone
+  uint32_t _bruteKey      = 0;     // current code (for the old direct path)
   uint32_t _bruteTotal    = 0;     // 1 << bits
+  uint32_t _bruteTried    = 0;     // codes sent so far
+  uint32_t _bruteT0       = 0;     // rate window start
   uint32_t _bruteRenderMs = 0;     // render throttle
   bool     _bruteChrome   = false; // static header drawn once
   ListItem _bruteConfigItems[3];
@@ -134,6 +139,8 @@ private:
   void _startBruteForce();         // show Brute Force configuration form
   void _showBruteForceConfig();
   void _runBruteForce();
+  bool _bruteNext(uint32_t& code);   // hot-zone generator (false = exhausted)
+  const char* _bruteZoneName() const;
   void _pickBruteProto();
   void _pickBruteRepeats();
   void _bruteTransmit(uint32_t code);  // encode one code + send (registry or table)

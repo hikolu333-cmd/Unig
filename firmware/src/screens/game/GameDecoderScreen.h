@@ -1,6 +1,72 @@
 #pragma once
 
 #include "ui/templates/BaseScreen.h"
+
+#ifdef USE_LVGL_SHELL
+// ─────────────────────────────────────────────────────────────────────────────
+// Decoder — native LVGL build. Timed hex-code crack with Mastermind-style
+// feedback (green = right char+place, orange = right char wrong place).
+// UP/DOWN cycle hex digit, LEFT/RIGHT move, PRESS lock digit / submit.
+// ─────────────────────────────────────────────────────────────────────────────
+#include <lvgl.h>
+#include "ui/lvgl/LvglUi.h"
+
+class GameDecoderScreen : public BaseScreen
+{
+public:
+  const char* title()     override { return "Decoder"; }
+  bool inhibitPowerSave() override { return _state == ST_PLAY; }
+  bool inhibitPowerOff()  override { return true; }
+
+  void onInit()   override;
+  void onUpdate() override;
+  void onRender() override;
+
+private:
+  enum State { ST_MENU, ST_PLAY, ST_RESULT };
+
+  static constexpr uint8_t kCodeLen = 4;
+  static constexpr uint8_t kMaxTries = 8;
+  static constexpr uint8_t kDiffN   = 3;
+  static const char* const kDiffNames[kDiffN];
+  static constexpr uint32_t kTimeMs[kDiffN] = { 90000, 60000, 30000 };
+
+  State   _state = ST_MENU;
+  int8_t  _menuIdx = 0;
+  uint8_t _diff = 0;
+  char    _secret[kCodeLen + 1] = {};
+  char    _grid[kMaxTries][kCodeLen + 1] = {};
+  uint8_t _marks[kMaxTries][kCodeLen] = {};
+  uint8_t _row = 0;
+  uint8_t _col = 0;
+  uint8_t _digit = 0;         // 0..15 cycling at the cursor
+  uint8_t _entry[kCodeLen] = {};   // chosen digit per cell
+  uint32_t _endMs = 0;
+  uint8_t  _best[kDiffN] = {};
+
+  lv_obj_t* _arena = nullptr;
+  lv_obj_t* _timer = nullptr;
+  lv_obj_t* _cells[kMaxTries][kCodeLen] = {};
+  lv_obj_t* _hint = nullptr;
+  lv_obj_t* _overlay = nullptr;
+  lv_obj_t* _ovRows[4] = {};
+  uint8_t  _ovN = 0;
+
+  void _build();
+  void _showMenu();
+  void _hideOverlay();
+  void _showResult(bool win);
+  void _startPlay();
+  void _refreshRow(uint8_t row);
+  void _markRow(uint8_t row);
+  void _submitRow();
+};
+
+#else  // legacy — original from the repo
+
+// ── Legacy: original header from the repository (verbatim) ──
+
+#include "ui/templates/BaseScreen.h"
 #ifdef USE_LVGL_SHELL
 #include "ui/lvgl/SpriteCanvas.h"
 #endif
@@ -94,3 +160,5 @@ private:
   int _by() { return bodyY(); }
 #endif
 };
+
+#endif

@@ -1,646 +1,310 @@
+//
+// Decoder — native LVGL build (USE_LVGL_SHELL). Hex grid of rounded cells,
+// countdown timer, Mastermind-style marks. Stick-only input.
+//
+
 #include "GameDecoderScreen.h"
 #include "core/Device.h"
-#include "core/ConfigManager.h"
 #include "core/ScreenManager.h"
 #include "core/AchievementManager.h"
-#include "screens/game/GameMenuScreen.h"
+#include "core/ConfigManager.h"
 
-static constexpr char kCharDB[16] = {
-  '0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'
+#ifdef USE_LVGL_SHELL
+
+const char* const GameDecoderScreen::kDiffNames[kDiffN] = {
+  "CALM", "RUSH", "PANIC"
 };
 
-static const uint16_t kColors[4] = {
-  TFT_DARKGREY, TFT_RED, TFT_ORANGE, TFT_GREEN
-};
+constexpr uint32_t GameDecoderScreen::kTimeMs[GameDecoderScreen::kDiffN];
 
-// ── Lifecycle ───────────────────────────────────────────────────────────────
+void GameDecoderScreen::onInit()
+{
+  for (int i = 0; i < kDiffN; i++)
+    _best[i] = Config.get(String("dec_best_") + i, "0").toInt();
+  _build();
+  _showMenu();
+}
 
-void GameDecoderScreen::onInit()  { render(); }
+void GameDecoderScreen::_build()
+{
+  lv_obj_t* parent = LvglUi::viewParent();
+
+  _arena = lv_obj_create(parent);
+  lv_obj_set_pos(_arena, 0, 0);
+  lv_obj_set_size(_arena, lv_obj_get_width(parent), lv_obj_get_height(parent));
+  lv_obj_set_style_bg_color(_arena, lv_color_hex(0x0f1119), 0);
+  lv_obj_set_style_bg_opa(_arena, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(_arena, 0, 0);
+  lv_obj_set_style_pad_all(_arena, 0, 0);
+  lv_obj_set_style_radius(_arena, 0, 0);
+  lv_obj_clear_flag(_arena, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* t = lv_label_create(_arena);
+  lv_obj_set_style_text_font(t, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_color(t, LvglUi::c565(Config.getThemeColor()), 0);
+  lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 4);
+  lv_label_set_text(t, "DECODER");
+
+  _timer = lv_label_create(_arena);
+  lv_obj_set_style_text_font(_timer, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(_timer, lv_color_hex(0xff7043), 0);
+  lv_obj_align(_timer, LV_ALIGN_TOP_RIGHT, -8, 30);
+  lv_label_set_text(_timer, "");
+
+  const int cellW = 40, cellH = 40, gap = 6;
+  const int gridW = kCodeLen * cellW + (kCodeLen - 1) * gap;
+  const int x0 = (lv_obj_get_width(_arena) - gridW) / 2;
+  const int y0 = 56;
+
+  for (int r = 0; r < kMaxTries; r++) {
+    for (int c = 0; c < kCodeLen; c++) {
+      lv_obj_t* cell = lv_label_create(_arena);
+      lv_obj_set_pos(cell, x0 + c * (cellW + gap), y0 + r * (cellH + gap));
+      lv_obj_set_size(cell, cellW, cellH);
+      lv_obj_set_style_text_font(cell, &lv_font_montserrat_16, 0);
+      lv_obj_set_style_text_align(cell, LV_TEXT_ALIGN_CENTER, 0);
+      lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, 0);
+      lv_obj_set_style_bg_color(cell, lv_color_hex(0x1a1f2e), 0);
+      lv_obj_set_style_border_color(cell, lv_color_hex(0x2c3650), 0);
+      lv_obj_set_style_border_width(cell, 1, 0);
+      lv_obj_set_style_radius(cell, 6, 0);
+      lv_label_set_text(cell, " ");
+      _cells[r][c] = cell;
+    }
+  }
+
+  _hint = lv_label_create(_arena);
+  lv_obj_set_style_text_font(_hint, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(_hint, lv_color_hex(0x7a8496), 0);
+  lv_obj_align(_hint, LV_ALIGN_BOTTOM_MID, 0, -6);
+  lv_label_set_text(_hint, "UP/DOWN = digit   LEFT/RIGHT = move   PRESS = try");
+}
+
+void GameDecoderScreen::_hideOverlay()
+{
+  if (_overlay) { lv_obj_del(_overlay); _overlay = nullptr; _ovN = 0; }
+}
+
+void GameDecoderScreen::_showMenu()
+{
+  _state = ST_MENU;
+  _hideOverlay();
+  _menuIdx = 0;
+  lv_label_set_text(_timer, "");
+
+  _overlay = lv_obj_create(_arena);
+  lv_obj_center(_overlay);
+  lv_obj_set_size(_overlay, 230, 150);
+  lv_obj_set_style_bg_color(_overlay, lv_color_hex(0x101a26), 0);
+  lv_obj_set_style_bg_opa(_overlay, LV_OPA_90, 0);
+  lv_obj_set_style_border_color(_overlay, LvglUi::c565(Config.getThemeColor()), 0);
+  lv_obj_set_style_border_width(_overlay, 2, 0);
+  lv_obj_set_style_radius(_overlay, 10, 0);
+  lv_obj_set_style_pad_all(_overlay, 10, 0);
+  lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+  const char* rows[4] = { "Play", nullptr, "Best", "Exit" };
+  _ovN = 4;
+  for (int i = 0; i < 4; i++) {
+    _ovRows[i] = lv_label_create(_overlay);
+    lv_obj_set_style_text_font(_ovRows[i], &lv_font_montserrat_16, 0);
+    lv_obj_align(_ovRows[i], LV_ALIGN_TOP_MID, 0, i * 32);
+    lv_label_set_text(_ovRows[i], rows[i] ? rows[i] : "");
+  }
+}
+
+void GameDecoderScreen::_showResult(bool win)
+{
+  _state = ST_RESULT;
+  _hideOverlay();
+
+  if (win) {
+    uint8_t solved = _row + 1;
+    if (solved > _best[_diff]) {
+      _best[_diff] = solved;
+      Config.set(String("dec_best_") + _diff, String(solved));
+    }
+    int n = Achievement.inc("decoder_win");
+    if (n == 1) Achievement.unlock("decoder_win");
+  }
+
+  _overlay = lv_obj_create(_arena);
+  lv_obj_center(_overlay);
+  lv_obj_set_size(_overlay, 240, 140);
+  lv_obj_set_style_bg_color(_overlay, win ? lv_color_hex(0x0d1a12) : lv_color_hex(0x1a0d0d), 0);
+  lv_obj_set_style_bg_opa(_overlay, LV_OPA_90, 0);
+  lv_obj_set_style_border_color(_overlay, win ? lv_color_hex(0x2e8b57) : lv_color_hex(0xb0540f), 0);
+  lv_obj_set_style_border_width(_overlay, 2, 0);
+  lv_obj_set_style_radius(_overlay, 10, 0);
+  lv_obj_set_style_pad_all(_overlay, 10, 0);
+  lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* t = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(t, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_color(t, win ? lv_color_hex(0x62d49c) : lv_color_hex(0xff7043), 0);
+  lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 8);
+  lv_label_set_text(t, win ? "CRACKED!" : "TIME OUT");
+
+  char buf[32];
+  snprintf(buf, sizeof(buf), "code was %s", _secret);
+  lv_obj_t* s = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(s, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(s, lv_color_white(), 0);
+  lv_obj_align(s, LV_ALIGN_TOP_MID, 0, 42);
+  lv_label_set_text(s, buf);
+
+  lv_obj_t* h = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(h, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(h, lv_color_hex(0x9aa5b1), 0);
+  lv_obj_align(h, LV_ALIGN_TOP_MID, 0, 70);
+  lv_label_set_text(h, "PRESS = retry   BACK = menu");
+  _ovN = 0;
+}
+
+void GameDecoderScreen::_startPlay()
+{
+  _hideOverlay();
+  const char* hex = "0123456789ABCDEF";
+  for (int i = 0; i < kCodeLen; i++) _secret[i] = hex[random(16)];
+  _secret[kCodeLen] = '\0';
+  _row = 0; _col = 0; _digit = 0;
+  memset(_entry, 0, sizeof(_entry));
+  _endMs = millis() + kTimeMs[_diff];
+  _state = ST_PLAY;
+  for (int r = 0; r < kMaxTries; r++) _refreshRow(r);
+  _refreshRow(0);
+}
+
+void GameDecoderScreen::_refreshRow(uint8_t row)
+{
+  for (int c = 0; c < kCodeLen; c++) {
+    lv_obj_t* cell = _cells[row][c];
+    if (row < _row) continue;   // submitted rows keep marks
+    bool cur = (c == _col);
+    char buf[2] = { "0123456789ABCDEF"[_entry[c]], 0 };
+    lv_label_set_text(cell, buf);
+    lv_obj_set_style_bg_color(cell, cur ? lv_color_hex(0x2a3654) : lv_color_hex(0x1a1f2e), 0);
+    lv_obj_set_style_border_color(cell,
+      cur ? LvglUi::c565(Config.getThemeColor()) : lv_color_hex(0x2c3650), 0);
+    lv_obj_set_style_text_color(cell, lv_color_white(), 0);
+  }
+}
+
+void GameDecoderScreen::_markRow(uint8_t row)
+{
+  bool used[kCodeLen] = {};
+  for (int c = 0; c < kCodeLen; c++) {
+    if (_grid[row][c] == _secret[c]) { _marks[row][c] = 2; used[c] = true; }
+    else _marks[row][c] = 0;
+  }
+  for (int c = 0; c < kCodeLen; c++) {
+    if (_marks[row][c] == 2) continue;
+    for (int t = 0; t < kCodeLen; t++) {
+      if (!used[t] && _grid[row][c] == _secret[t]) {
+        _marks[row][c] = 1; used[t] = true; break;
+      }
+    }
+  }
+  for (int c = 0; c < kCodeLen; c++) {
+    lv_obj_t* cell = _cells[row][c];
+    switch (_marks[row][c]) {
+      case 2:  lv_obj_set_style_bg_color(cell, lv_color_hex(0x2e8b57), 0);
+               lv_obj_set_style_text_color(cell, lv_color_black(), 0); break;
+      case 1:  lv_obj_set_style_bg_color(cell, lv_color_hex(0xd4a017), 0);
+               lv_obj_set_style_text_color(cell, lv_color_black(), 0); break;
+      default: lv_obj_set_style_bg_color(cell, lv_color_hex(0x22283a), 0);
+               lv_obj_set_style_text_color(cell, lv_color_hex(0x8a94a6), 0); break;
+    }
+  }
+}
+
+void GameDecoderScreen::_submitRow()
+{
+  for (int c = 0; c < kCodeLen; c++) _grid[_row][c] = "0123456789ABCDEF"[_entry[c]];
+  _grid[_row][kCodeLen] = '\0';
+  _markRow(_row);
+
+  if (strncmp(_grid[_row], _secret, kCodeLen) == 0) {
+    if (Uni.Speaker) Uni.Speaker->playWin();
+    _showResult(true);
+    return;
+  }
+  _row++;
+  if (_row >= kMaxTries) {
+    if (Uni.Speaker) Uni.Speaker->playLose();
+    _showResult(false);
+    return;
+  }
+  _col = 0;
+  _refreshRow(_row);
+}
 
 void GameDecoderScreen::onUpdate()
 {
-#ifdef DEVICE_HAS_KEYBOARD
-  if (_state == STATE_PLAY) {
-    while (Uni.Keyboard->available()) {
-      char c = Uni.Keyboard->getKey();
-      if (c == '\b' || c == 127)                                            { _backChar();   break; }
-      else if (c == '\n' || c == '\r')                                      { _submitGuess(); break; }
-      else if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'))
-        _handleKeyInput((c >= 'a') ? c - ('a' - 'A') : c);
+  // menu focus
+  if (_state == ST_MENU && _overlay) {
+    for (int i = 0; i < _ovN; i++) {
+      bool sel = (i == _menuIdx);
+      lv_obj_set_style_text_color(_ovRows[i], sel ? lv_color_black() : lv_color_white(), 0);
+      lv_obj_set_style_bg_color(_ovRows[i],
+        sel ? LvglUi::c565(Config.getThemeColor()) : lv_color_hex(0x101a26), 0);
+      lv_obj_set_style_bg_opa(_ovRows[i], LV_OPA_COVER, 0);
+      lv_obj_set_style_pad_hor(_ovRows[i], 14, 0);
+      lv_obj_set_style_pad_ver(_ovRows[i], 5, 0);
+      lv_obj_set_style_radius(_ovRows[i], 5, 0);
     }
+    char db[36];
+    snprintf(db, sizeof(db), "Difficulty: %s", kDiffNames[_diff]);
+    lv_label_set_text(_ovRows[1], db);
   }
-#endif
 
-  if (_state == STATE_PLAY && millis() - _lastRenderMs >= 500) {
-    _lastRenderMs = millis();
-    if (millis() >= _endMs) {
-      _state = STATE_RESULT;
-      _win   = false;
-      if (Uni.Speaker) Uni.Speaker->playLose();
-    }
-    render();
+  // countdown
+  if (_state == ST_PLAY) {
+    int left = (int)(_endMs - millis());
+    char tb[16];
+    snprintf(tb, sizeof(tb), "%ds", max(0, left / 1000));
+    lv_label_set_text(_timer, tb);
+    if (left <= 0) { if (Uni.Speaker) Uni.Speaker->playLose(); _showResult(false); }
   }
 
   if (!Uni.Nav->wasPressed()) return;
   auto dir = Uni.Nav->readDirection();
 
-  if (_state == STATE_MENU) {
-    switch (dir) {
-      case INavigation::DIR_UP:    _menuIdx = (_menuIdx - 1 + kMenuItems) % kMenuItems; render(); break;
-      case INavigation::DIR_DOWN:  _menuIdx = (_menuIdx + 1) % kMenuItems;              render(); break;
-      case INavigation::DIR_PRESS:
-        if      (_menuIdx == 0) _initGame();
-        else if (_menuIdx == 1) { _difficulty = (_difficulty + 1) % kDiffCount; render(); }
-        else if (_menuIdx == 2) {
-          _hsViewDiff = _difficulty;
-          _loadScores(_hsViewDiff);
-          _state = STATE_HIGH_SCORES;
-          render();
-        } else {
-          Screen.goBack();
-        }
-        break;
-      case INavigation::DIR_BACK: Screen.goBack(); break;
-      default: break;
+  if (_state == ST_MENU) {
+    if (dir == INavigation::DIR_UP)   _menuIdx = (_menuIdx + _ovN - 1) % _ovN;
+    if (dir == INavigation::DIR_DOWN) _menuIdx = (_menuIdx + 1) % _ovN;
+    if (dir == INavigation::DIR_PRESS) {
+      if (_menuIdx == 0) _startPlay();
+      else if (_menuIdx == 1) _diff = (_diff + 1) % kDiffN;
+      else Screen.goBack();
     }
-
-  } else if (_state == STATE_PLAY) {
-    switch (dir) {
-#ifndef DEVICE_HAS_KEYBOARD
-      case INavigation::DIR_UP: {
-        int mx = kCharDBLen + (_cursor > 0 ? 1 : 0);
-        _cycleIdx = (_cycleIdx - 1 + mx) % mx; render();
-        break;
-      }
-      case INavigation::DIR_DOWN: {
-        int mx = kCharDBLen + (_cursor > 0 ? 1 : 0);
-        _cycleIdx = (_cycleIdx + 1) % mx; render();
-        break;
-      }
-#endif
-      case INavigation::DIR_PRESS:
-#ifdef DEVICE_HAS_KEYBOARD
-        _submitGuess();
-#else
-        _confirmChar();
-#endif
-        break;
-      case INavigation::DIR_BACK: _backChar(); break;
-      default: break;
+  } else if (_state == ST_PLAY) {
+    if      (dir == INavigation::DIR_UP)    { _digit = (_digit + 1) & 0xF; _entry[_col] = _digit; }
+    else if (dir == INavigation::DIR_DOWN) { _digit = (_digit + 15) & 0xF; _entry[_col] = _digit; }
+    else if (dir == INavigation::DIR_RIGHT) { if (_col < kCodeLen - 1) { _col++; _digit = _entry[_col]; } }
+    else if (dir == INavigation::DIR_LEFT || dir == INavigation::DIR_BACK) {
+      if (_col > 0) { _col--; _digit = _entry[_col]; }
     }
-
-  } else if (_state == STATE_RESULT) {
-    if (dir != INavigation::DIR_NONE) { _state = STATE_MENU; _menuIdx = 0; render(); }
-
-  } else if (_state == STATE_HIGH_SCORES) {
-    switch (dir) {
-      case INavigation::DIR_UP:
-      case INavigation::DIR_LEFT:
-        _hsViewDiff = (_hsViewDiff - 1 + kDiffCount) % kDiffCount;
-        _loadScores(_hsViewDiff);
-        render();
-        break;
-      case INavigation::DIR_DOWN:
-      case INavigation::DIR_RIGHT:
-        _hsViewDiff = (_hsViewDiff + 1) % kDiffCount;
-        _loadScores(_hsViewDiff);
-        render();
-        break;
-      case INavigation::DIR_PRESS:
-      case INavigation::DIR_BACK:
-        _state   = STATE_MENU;
-        _menuIdx = 0;
-        render();
-        break;
-      default: break;
-    }
+    else if (dir == INavigation::DIR_PRESS) { _submitRow(); return; }
+    _refreshRow(_row);
+  } else if (_state == ST_RESULT) {
+    if (dir == INavigation::DIR_PRESS) _startPlay();
+    else if (dir == INavigation::DIR_BACK) _showMenu();
   }
 }
 
 void GameDecoderScreen::onRender()
 {
-#ifdef USE_LVGL_SHELL
-  if (!_scene.ensure(Uni.Lcd, bodyW(), bodyH())) return;
-  _spr = &_scene.sprite();
+  LvglUi::pump();
+}
+
+#else  // ── legacy TFT (original from the repo) ───────────────────────────────
+
+#include "core/Device.h"
+#include "core/ScreenManager.h"
+#include "core/AchievementManager.h"
+#include "core/ConfigManager.h"
+
+#include "legacy_game_decoder.inc"
+
 #endif
-  if      (_state == STATE_MENU)         _renderMenu();
-  else if (_state == STATE_PLAY)         _renderPlay();
-  else if (_state == STATE_HIGH_SCORES)  _renderHighScores();
-  else                                   _renderResult();
-#ifdef USE_LVGL_SHELL
-  _scene.flush();
-#endif
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-const char* GameDecoderScreen::_diffStr() const
-{
-  switch (_difficulty) {
-    case 0: return "Easy";   case 1: return "Medium";
-    case 2: return "Hard";   case 3: return "Extreme";
-    default: return "Easy";
-  }
-}
-
-int GameDecoderScreen::_timerSecs()   const { return (_difficulty == 1 || _difficulty == 3) ? 90 : 180; }
-int GameDecoderScreen::_maxAttempts() const {
-  if (_difficulty == 0) return 14;
-  if (_difficulty == 1) return 7;
-  return -1;
-}
-
-int GameDecoderScreen::_colorGuess(uint8_t idx, char c) const
-{
-  if (c == _target[idx]) return 3;
-  for (uint8_t i = 0; i < kInputLen; i++)
-    if (c == _target[i]) return 2;
-  return 1;
-}
-
-void GameDecoderScreen::_initGame()
-{
-  memset(_target, 0, sizeof(_target));
-  memset(_current, 0, sizeof(_current));
-  memset(_history, 0, sizeof(_history));
-  _histSize = _totalInputs = _cursor = _cycleIdx = 0;
-  _win     = false;
-  _newRank = -1;
-
-  for (uint8_t i = 0; i < kInputLen; i++)
-    _target[i] = kCharDB[random(kCharDBLen)];
-
-  _startMs      = millis();
-  _endMs        = _startMs + (uint32_t)_timerSecs() * 1000;
-  _lastRenderMs = 0;
-  _state        = STATE_PLAY;
-
-  _loadScores(_difficulty);
-
-  int n = Achievement.inc("decoder_first_play");
-  if (n == 1) Achievement.unlock("decoder_first_play");
-
-  render();
-}
-
-void GameDecoderScreen::_pushHistory()
-{
-  if (_histSize < kMaxHistory) _histSize++;
-  for (uint8_t i = _histSize - 1; i > 0; i--)
-    memcpy(_history[i], _history[i - 1], kInputLen);
-  memcpy(_history[0], _current, kInputLen);
-}
-
-void GameDecoderScreen::_submitGuess()
-{
-  for (uint8_t i = 0; i < kInputLen; i++)
-    if (_current[i] == '\0') return;
-
-  _pushHistory();
-  _totalInputs++;
-
-  if (memcmp(_current, _target, kInputLen) == 0) {
-    _state = STATE_RESULT; _win = true;
-    uint32_t elapsed = millis() - _startMs;
-    _insertScore((int)_totalInputs, elapsed);
-    _saveScores(_difficulty);
-    if (Uni.Speaker) Uni.Speaker->playWin();
-    {
-      int n = Achievement.inc("decoder_first_win");
-      if (n == 1) Achievement.unlock("decoder_first_win");
-    }
-    if (_difficulty >= 2) Achievement.unlock("decoder_win_hard");
-    render(); return;
-  }
-
-  if (_maxAttempts() != -1 && _totalInputs >= (uint8_t)_maxAttempts()) {
-    _state = STATE_RESULT; _win = false;
-    if (Uni.Speaker) Uni.Speaker->playLose();
-    render(); return;
-  }
-
-  memset(_current, 0, kInputLen);
-  _cursor = _cycleIdx = 0;
-  render();
-}
-
-void GameDecoderScreen::_backChar()
-{
-  if (_cursor <= 0) { _state = STATE_MENU; render(); return; }
-  _current[--_cursor] = '\0';
-  _cycleIdx = 0;
-  render();
-}
-
-void GameDecoderScreen::_confirmChar()
-{
-  if (_cycleIdx == kCharDBLen) { _backChar(); return; }  // < selected → erase
-  _current[_cursor++] = kCharDB[_cycleIdx];
-  _cycleIdx = 0;
-  if (_cursor >= kInputLen) _submitGuess();
-  else render();
-}
-
-void GameDecoderScreen::_handleKeyInput(char c)
-{
-  if (_cursor >= kInputLen) return;
-  _current[_cursor++] = c;
-  render();
-}
-
-// ── Render ──────────────────────────────────────────────────────────────────
-
-void GameDecoderScreen::_renderMenu()
-{
-#ifdef USE_LVGL_SHELL
-  auto& lcd = *_spr;   // game renders into the canvas sprite
-#else
-  auto& lcd = Uni.Lcd;
-#endif
-  bool firstTime = (_prevState != STATE_MENU);
-  if (firstTime) {
-    lcd.fillRect(_bx(), _by(), bodyW(), bodyH(), TFT_BLACK);
-    _prevState      = STATE_MENU;
-    _lastMenuIdx    = -1;
-    _lastDifficulty = 0xFF;
-  }
-
-  const char* items[kMenuItems] = {"Play", _diffStr(), "High Scores", "Exit"};
-  lcd.setTextSize(2);
-  const int lineH  = lcd.fontHeight() + 6;
-  const int startY = (bodyH() - (int)kMenuItems * lineH) / 2;
-
-  for (int i = 0; i < (int)kMenuItems; i++) {
-    bool selNow  = (i == _menuIdx);
-    bool selPrev = (i == _lastMenuIdx);
-    bool diffRow = (i == 1 && _lastDifficulty != _difficulty);
-    if (!firstTime && selNow == selPrev && !diffRow) continue;
-
-    Sprite sp(&lcd);
-    sp.createSprite(bodyW(), lineH);
-    sp.fillSprite(TFT_BLACK);
-    sp.setTextDatum(MC_DATUM);
-    sp.setTextSize(2);
-    sp.setTextColor(selNow ? Config.getThemeColor() : TFT_WHITE, TFT_BLACK);
-    sp.drawString(items[i], bodyW() / 2, lineH / 2);
-    sp.pushSprite(_bx(), _by() + startY + i * lineH);
-    sp.deleteSprite();
-  }
-
-  _lastMenuIdx    = _menuIdx;
-  _lastDifficulty = _difficulty;
-}
-
-void GameDecoderScreen::_renderPlay()
-{
-#ifdef USE_LVGL_SHELL
-  auto& lcd = *_spr;   // game renders into the canvas sprite
-#else
-  auto& lcd = Uni.Lcd;
-#endif
-#ifdef DEVICE_HAS_KEYBOARD
-  constexpr bool noKb = false;
-#else
-  constexpr bool noKb = true;
-#endif
-
-  bool firstTime = (_prevState != STATE_PLAY);
-  if (firstTime) {
-    lcd.fillRect(_bx(), _by(), bodyW(), bodyH(), TFT_BLACK);
-    _prevState       = STATE_PLAY;
-    _lastTotalInputs = 0xFF;
-    _lastTimerSec    = -1;
-  }
-
-  const int arrowH   = noKb ? 8 : 0;
-  const int arrowV   = noKb ? 6 : 0;
-  const int cellW    = 14, cellH = 14, cellStep = 16;
-  const int inputX   = 16;
-  const int inputY   = noKb ? arrowH - 2 : 2;
-  const int histY0   = inputY + cellH + (noKb ? arrowV : 3);
-  const int histRowH = 16;
-  const int maxAtt   = _maxAttempts();
-  const int attCap   = (maxAtt == -1) ? (int)kMaxHistory : maxAtt;
-  const int visRows  = min(min((int)kMaxHistory, (bodyH() - histY0) / histRowH), attCap);
-  const int leftZoneW = inputX + kInputLen * cellStep + 4;
-  const int rightZoneW = bodyW() - leftZoneW;
-  const int rightCXLocal = rightZoneW / 2;
-
-  {
-    Sprite sp(&lcd);
-    sp.createSprite(leftZoneW, bodyH());
-    sp.fillSprite(TFT_BLACK);
-
-    sp.setTextDatum(MC_DATUM);
-    sp.setTextSize(1);
-
-    if (_cursor > 0) {
-      sp.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-      sp.drawString("<", 7, inputY + cellH / 2);
-    }
-
-    if (noKb) {
-      const int cx = inputX + _cursor * cellStep + cellW / 2;
-      sp.fillTriangle(cx, inputY - 5, cx - 2, inputY - 2, cx + 2, inputY - 2, TFT_LIGHTGREY);
-      sp.fillTriangle(cx, inputY + cellH + 4, cx - 2, inputY + cellH + 1, cx + 2, inputY + cellH + 1, TFT_LIGHTGREY);
-    }
-
-    for (uint8_t ci = 0; ci < kInputLen; ci++) {
-      const int x      = inputX + ci * cellStep;
-      bool active      = (ci == _cursor);
-      bool eraseActive = active && noKb && (_cycleIdx == kCharDBLen);
-      char c           = _current[ci];
-      if (active && noKb) c = eraseActive ? '<' : kCharDB[_cycleIdx];
-
-      uint16_t bg = eraseActive ? TFT_MAROON : (active ? TFT_DARKCYAN : TFT_DARKGREY);
-      sp.fillRoundRect(x, inputY, cellW, cellH, 2, bg);
-      if (c != '\0') {
-        char buf[2] = {c, '\0'};
-        sp.setTextColor(TFT_WHITE, bg);
-        sp.drawString(buf, x + cellW / 2, inputY + cellH / 2);
-      }
-    }
-
-    bool showColors = (_difficulty < 2);
-    for (int row = 0; row < visRows; row++) {
-      const int y   = histY0 + row * histRowH + 1;
-      bool hasEntry = (row < _histSize);
-      int  hints[4] = {};
-
-      for (uint8_t ci = 0; ci < kInputLen; ci++) {
-        const int x = inputX + ci * cellStep;
-        char hc     = hasEntry ? _history[row][ci] : '\0';
-        int  color  = hasEntry ? _colorGuess(ci, hc) : 0;
-        hints[ci]   = color;
-
-        uint16_t bg = showColors ? kColors[color] : TFT_DARKGREY;
-        sp.fillRoundRect(x, y, cellW, cellH, 2, bg);
-        if (hc != '\0') {
-          char buf[2] = {hc, '\0'};
-          sp.setTextColor(TFT_WHITE, bg);
-          sp.drawString(buf, x + cellW / 2, y + cellH / 2);
-        }
-      }
-
-      if (hasEntry) {
-        for (int a = 0; a < 3; a++)
-          for (int b = a + 1; b < 4; b++)
-            if (hints[a] > hints[b]) { int t = hints[a]; hints[a] = hints[b]; hints[b] = t; }
-        uint8_t k = 0;
-        for (uint8_t dy = 0; dy < 2; dy++)
-          for (uint8_t dx = 0; dx < 2; dx++)
-            sp.fillRoundRect(dx * 7 + 1, y + dy * 6 + 1, 5, 5, 1, kColors[hints[k++]]);
-      }
-    }
-
-    sp.pushSprite(_bx(), _by());
-    sp.deleteSprite();
-  }
-
-  const int rightPanelH = 70;
-  int rem = (_endMs > millis()) ? (int)((_endMs - millis()) / 1000) : 0;
-
-  if (firstTime || _lastTotalInputs != _totalInputs || _lastTimerSec != rem) {
-    Sprite sp(&lcd);
-    sp.createSprite(rightZoneW, rightPanelH);
-    sp.fillSprite(TFT_BLACK);
-
-    sp.setTextDatum(TC_DATUM);
-    sp.setTextSize(1);
-    sp.setTextColor(TFT_DARKGREY, TFT_BLACK);
-
-    char valBuf[8];
-    if (_maxAttempts() == -1) {
-      sp.drawString("Turn", rightCXLocal, 2);
-      snprintf(valBuf, sizeof(valBuf), "%d", _totalInputs);
-    } else {
-      sp.drawString("Left", rightCXLocal, 2);
-      snprintf(valBuf, sizeof(valBuf), "%d", _maxAttempts() - _totalInputs);
-    }
-    sp.setTextSize(2);
-    sp.setTextColor(TFT_WHITE, TFT_BLACK);
-    sp.drawString(valBuf, rightCXLocal, 12);
-
-    char timerBuf[8];
-    if (rem >= 60) snprintf(timerBuf, sizeof(timerBuf), "%d:%02d", rem / 60, rem % 60);
-    else           snprintf(timerBuf, sizeof(timerBuf), "%ds",     rem);
-    sp.setTextSize(1);
-    sp.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    sp.drawString("Time", rightCXLocal, 38);
-    sp.setTextSize(2);
-    sp.setTextColor(TFT_WHITE, TFT_BLACK);
-    sp.drawString(timerBuf, rightCXLocal, 48);
-
-    sp.pushSprite(_bx() + leftZoneW, _by());
-    sp.deleteSprite();
-
-    _lastTotalInputs = _totalInputs;
-    _lastTimerSec    = rem;
-  }
-}
-
-void GameDecoderScreen::_renderResult()
-{
-  if (_prevState == STATE_RESULT) return;
-  _prevState = STATE_RESULT;
-
-  const bool won = _win;
-
-#ifdef USE_LVGL_SHELL
-  auto& lcd = *_spr;   // game renders into the canvas sprite
-#else
-  auto& lcd = Uni.Lcd;
-#endif
-  lcd.fillRect(_bx(), _by(), bodyW(), bodyH(), TFT_BLACK);
-
-  const int cx = _bx() + bodyW() / 2;
-  char ans[5] = {}, buf[32];
-  memcpy(ans, _target, kInputLen);
-
-  lcd.setTextDatum(TC_DATUM);
-  lcd.setTextSize(2);
-  lcd.setTextColor(won ? Config.getThemeColor() : TFT_RED, TFT_BLACK);
-  lcd.drawString(won ? "YOU WIN!" : "GAME OVER", cx, _by() + 4);
-
-  lcd.drawFastHLine(_bx() + 8, _by() + 24, bodyW() - 16, TFT_DARKGREY);
-
-  lcd.setTextSize(1);
-  lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  lcd.drawString("Answer was", cx, _by() + 28);
-  lcd.setTextSize(2);
-  lcd.setTextColor(TFT_WHITE, TFT_BLACK);
-  lcd.drawString(ans, cx, _by() + 38);
-
-  lcd.setTextSize(1);
-  if (won) {
-    uint32_t ms   = (_newRank >= 0) ? _scores[_newRank].ms : (millis() - _startMs);
-    uint32_t secs = ms / 1000;
-    uint32_t mins = secs / 60;
-    secs %= 60;
-    snprintf(buf, sizeof(buf), "%d turns  %um%02us", (int)_totalInputs, (unsigned)mins, (unsigned)secs);
-  } else {
-    snprintf(buf, sizeof(buf), "%d turns used", (int)_totalInputs);
-  }
-  lcd.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  lcd.drawString(buf, cx, _by() + 58);
-
-  if (won && _newRank >= 0) {
-    snprintf(buf, sizeof(buf), "New #%d Best!", _newRank + 1);
-    lcd.setTextSize(2);
-    lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
-    lcd.drawString(buf, cx, _by() + 72);
-  }
-
-  lcd.setTextSize(1);
-  lcd.setTextDatum(BC_DATUM);
-  lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  lcd.drawString("Press to continue", cx, _by() + bodyH() - 2);
-}
-
-// ── Score storage ─────────────────────────────────────────────────────────────
-
-void GameDecoderScreen::_loadScores(uint8_t diff)
-{
-  _scoreCount = 0;
-
-  char path[48];
-  snprintf(path, sizeof(path), "/unigeek/games/decoder_%d.txt", diff);
-  if (!Uni.Storage->exists(path)) return;
-
-  String data = Uni.Storage->readFile(path);
-  int pos = 0, len = data.length();
-
-  while (pos < len && _scoreCount < kMaxScores) {
-    int nl = data.indexOf('\n', pos);
-    if (nl < 0) nl = len;
-    String line = data.substring(pos, nl);
-    pos = nl + 1;
-    int comma = line.indexOf(',');
-    if (comma < 0) continue;
-    _scores[_scoreCount].turns = line.substring(0, comma).toInt();
-    _scores[_scoreCount].ms    = (uint32_t)line.substring(comma + 1).toInt();
-    _scoreCount++;
-  }
-}
-
-void GameDecoderScreen::_saveScores(uint8_t diff)
-{
-  Uni.Storage->makeDir("/unigeek/games");
-
-  char path[48];
-  snprintf(path, sizeof(path), "/unigeek/games/decoder_%d.txt", diff);
-
-  String data = "";
-  for (uint8_t i = 0; i < _scoreCount; i++)
-    data += String(_scores[i].turns) + "," + String((int)_scores[i].ms) + "\n";
-
-  Uni.Storage->writeFile(path, data.c_str());
-}
-
-void GameDecoderScreen::_insertScore(int turns, uint32_t ms)
-{
-  int8_t insertAt = -1;
-  for (int8_t i = 0; i < (int8_t)_scoreCount; i++) {
-    if (turns < _scores[i].turns || (turns == _scores[i].turns && ms < _scores[i].ms)) {
-      insertAt = i;
-      break;
-    }
-  }
-  if (insertAt < 0) {
-    if (_scoreCount < kMaxScores) insertAt = (int8_t)_scoreCount;
-    else { _newRank = -1; return; }
-  }
-  uint8_t newCount = _scoreCount < kMaxScores ? _scoreCount + 1 : kMaxScores;
-  for (int8_t i = (int8_t)newCount - 1; i > insertAt; i--)
-    _scores[i] = _scores[i - 1];
-  _scores[insertAt].turns = turns;
-  _scores[insertAt].ms    = ms;
-  _scoreCount = newCount;
-  _newRank    = insertAt;
-}
-
-// ── _renderHighScores ─────────────────────────────────────────────────────────
-
-void GameDecoderScreen::_renderHighScores()
-{
-  static constexpr const char* kDiffNames[4] = { "Easy", "Medium", "Hard", "Extreme" };
-
-#ifdef USE_LVGL_SHELL
-  auto& lcd = *_spr;   // game renders into the canvas sprite
-#else
-  auto& lcd = Uni.Lcd;
-#endif
-  bool firstTime = (_prevState != STATE_HIGH_SCORES);
-  if (firstTime) {
-    lcd.fillRect(_bx(), _by(), bodyW(), bodyH(), TFT_BLACK);
-    _prevState      = STATE_HIGH_SCORES;
-    _lastHsViewDiff = 0xFF;
-
-    // Static hint — drawn once
-    lcd.setTextSize(1);
-    lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    lcd.setTextDatum(BC_DATUM);
-    lcd.drawString("[Up/Dn] Switch diff  [Back] Return", _bx() + bodyW() / 2, _by() + bodyH() - 1);
-  }
-
-  if (_lastHsViewDiff == _hsViewDiff) return;
-  _lastHsViewDiff = _hsViewDiff;
-
-  const int headerH  = 14;
-  const int lineH    = 14;
-  const int startY   = 18;
-  const int listH    = lineH * kMaxScores + 4;
-
-  // Header sprite
-  {
-    Sprite sp(&lcd);
-    sp.createSprite(bodyW(), headerH);
-    sp.fillSprite(TFT_BLACK);
-    sp.setTextSize(1);
-    sp.setTextDatum(TC_DATUM);
-    sp.setTextColor(Config.getThemeColor(), TFT_BLACK);
-    char title[20];
-    snprintf(title, sizeof(title), "Top %s", kDiffNames[_hsViewDiff]);
-    sp.drawString(title, bodyW() / 2, 2);
-
-    char pageBuf[8];
-    snprintf(pageBuf, sizeof(pageBuf), "%u/%u", _hsViewDiff + 1, kDiffCount);
-    sp.setTextDatum(TR_DATUM);
-    sp.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    sp.drawString(pageBuf, bodyW() - 1, 2);
-    sp.pushSprite(_bx(), _by());
-    sp.deleteSprite();
-  }
-
-  // List sprite
-  {
-    Sprite sp(&lcd);
-    sp.createSprite(bodyW(), listH);
-    sp.fillSprite(TFT_BLACK);
-    sp.setTextSize(1);
-
-    char buf[24];
-    for (uint8_t i = 0; i < kMaxScores; i++) {
-      bool     has = (i < _scoreCount);
-      uint16_t col = has ? (i == 0 ? TFT_YELLOW : TFT_WHITE) : TFT_DARKGREY;
-      sp.setTextColor(col, TFT_BLACK);
-
-      sp.setTextDatum(TL_DATUM);
-      snprintf(buf, sizeof(buf), "#%u", i + 1);
-      sp.drawString(buf, 8, i * lineH);
-
-      sp.setTextDatum(TR_DATUM);
-      if (has) {
-        uint32_t secs = _scores[i].ms / 1000;
-        uint32_t mins = secs / 60;
-        secs %= 60;
-        snprintf(buf, sizeof(buf), "%dt  %um%02us", _scores[i].turns, (unsigned)mins, (unsigned)secs);
-      } else {
-        snprintf(buf, sizeof(buf), "--");
-      }
-      sp.drawString(buf, bodyW() - 8, i * lineH);
-    }
-    sp.pushSprite(_bx(), _by() + startY);
-    sp.deleteSprite();
-  }
-}

@@ -38,6 +38,7 @@ public:
   // Send
   void sendSignal(const Signal& sig);
   void sendRaw(const uint16_t* data, uint16_t length, uint16_t freq);
+  IRsend* sender() { return _sender; }   // direct driver access (PowerBlast)
 
   // TV-B-Gone
   void startTvBGone(uint8_t region, void (*progressCb)(uint8_t current, uint8_t total) = nullptr,

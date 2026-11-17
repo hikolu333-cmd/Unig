@@ -153,8 +153,8 @@ private:
   uint16_t _colors[MAX_LINES] = {};
   int _count   = 0;
   int _scrollY = 0;  // lines scrolled up from auto-scroll position; 0 = follow latest
+  bool _dirty  = false;   // shared: LVGL rebuild flag / legacy redraw hint
 #ifdef USE_LVGL_SHELL
-  bool _dirty = true;
 
   lv_obj_t* _cont    = nullptr;   // outer container at (x,y,w,h)
   lv_obj_t* _log     = nullptr;   // scrolling flex-column of line labels

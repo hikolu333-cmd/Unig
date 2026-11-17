@@ -5,6 +5,7 @@
 #pragma once
 #include "ui/templates/ListScreen.h"
 #include "utils/nrf24/NRF24Util.h"
+#include "utils/nrf24/NrfJammer.h"
 
 class NRF24Screen : public ListScreen {
 public:
@@ -27,6 +28,7 @@ private:
     STATE_MENU,
     STATE_SPECTRUM,
     STATE_JAMMER_RUNNING,
+    STATE_JAMALL_RUNNING,
     STATE_MJ_SCAN,
     STATE_RF_TEST_TX,
   } _state = STATE_MENU;
@@ -39,7 +41,7 @@ private:
   uint8_t _menuReturnIndex = 0;
 
   // ─── Main menu ──────────────────────────────────────────────────
-  ListItem _mainItems[4] = {{"Spectrum"}, {"Jammer"}, {"MouseJack"}, {"RF Test TX"}};
+  ListItem _mainItems[5] = {{"Spectrum"}, {"Jammer"}, {"Jam All (4x)"}, {"MouseJack"}, {"RF Test TX"}};
 
   // ─── RF Test TX (continuous carrier — antenna/SWR bench check) ───
   static constexpr uint16_t kRfTestMaxCh     = 125;  // 0-125 -> 2400-2525 MHz
@@ -100,6 +102,8 @@ private:
   void _startJammer();
   void _jamStep();
   void _renderJammerStatus();
+  void _startJamAll();
+  void _renderJamAllStatus();
 
   // RF Test TX
   void _startRfTest();

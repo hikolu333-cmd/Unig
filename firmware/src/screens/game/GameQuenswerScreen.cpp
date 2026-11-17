@@ -1,609 +1,311 @@
+//
+// Quenswer — native LVGL build (USE_LVGL_SHELL). Answer blanks as rounded
+// cells; setup via stick char-cycler; handoff panel hides the word from P2.
+//
+
 #include "GameQuenswerScreen.h"
 #include "core/Device.h"
 #include "core/ScreenManager.h"
+#include "core/AchievementManager.h"
 #include "core/ConfigManager.h"
-#include "ui/actions/InputTextAction.h"
-#include "ui/actions/InputNumberAction.h"
-#include "ui/actions/ShowStatusAction.h"
 
-static constexpr char kAlphaDB[26] = {
-  'A','B','C','D','E','F','G','H','I','J','K','L','M',
-  'N','O','P','Q','R','S','T','U','V','W','X','Y','Z'
-};
+#ifdef USE_LVGL_SHELL
 
-// Cell colours
-static constexpr uint16_t kColEmpty  = 0x2104;          // very dark grey blank
-static constexpr uint16_t kColFilled = TFT_DARKGREY;    // typed, not yet checked
-static constexpr uint16_t kColCursor = TFT_DARKCYAN;    // active cell
-static constexpr uint16_t kColErase  = TFT_MAROON;      // active cell, erase mode
-static constexpr uint16_t kColLocked = TFT_DARKGREEN;   // correct + placed (sticky)
+void GameQuenswerScreen::onInit()
+{
+  _bestScore = Config.get("quenswer_best", "0").toInt();
+  _build();
+}
 
-// ── Lifecycle ─────────────────────────────────────────────────────────────────
+void GameQuenswerScreen::_build()
+{
+  lv_obj_t* parent = LvglUi::viewParent();
 
-void GameQuenswerScreen::onInit() { render(); }
+  _arena = lv_obj_create(parent);
+  lv_obj_set_pos(_arena, 0, 0);
+  lv_obj_set_size(_arena, lv_obj_get_width(parent), lv_obj_get_height(parent));
+  lv_obj_set_style_bg_color(_arena, lv_color_hex(0x100f1a), 0);
+  lv_obj_set_style_bg_opa(_arena, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(_arena, 0, 0);
+  lv_obj_set_style_pad_all(_arena, 0, 0);
+  lv_obj_set_style_radius(_arena, 0, 0);
+  lv_obj_clear_flag(_arena, LV_OBJ_FLAG_SCROLLABLE);
+
+  _title = lv_label_create(_arena);
+  lv_obj_set_style_text_font(_title, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_color(_title, LvglUi::c565(Config.getThemeColor()), 0);
+  lv_obj_align(_title, LV_ALIGN_TOP_MID, 0, 4);
+  lv_label_set_text(_title, "QUENSWER");
+
+  const int cellW = 30, cellH = 40, gap = 5;
+  const int w = kMaxLen * cellW + (kMaxLen - 1) * gap;
+  _cellsCont = lv_obj_create(_arena);
+  lv_obj_align(_cellsCont, LV_ALIGN_TOP_MID, 0, 40);
+  lv_obj_set_size(_cellsCont, w, cellH);
+  lv_obj_set_style_bg_opa(_cellsCont, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(_cellsCont, 0, 0);
+  lv_obj_set_style_pad_all(_cellsCont, 0, 0);
+  lv_obj_clear_flag(_cellsCont, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_flex_flow(_cellsCont, LV_FLEX_FLOW_ROW);
+  lv_obj_set_style_pad_column(_cellsCont, gap, 0);
+
+  for (int i = 0; i < kMaxLen; i++) {
+    _cells[i] = lv_label_create(_cellsCont);
+    lv_obj_set_size(_cells[i], cellW, cellH);
+    lv_obj_set_style_text_font(_cells[i], &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_align(_cells[i], LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_bg_opa(_cells[i], LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(_cells[i], lv_color_hex(0x1a2030), 0);
+    lv_obj_set_style_radius(_cells[i], 6, 0);
+    lv_label_set_text(_cells[i], " ");
+  }
+
+  _status = lv_label_create(_arena);
+  lv_obj_set_style_text_font(_status, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(_status, lv_color_hex(0x9aa5b1), 0);
+  lv_obj_align(_status, LV_ALIGN_TOP_MID, 0, 96);
+  lv_label_set_text(_status, "");
+
+  _hint = lv_label_create(_arena);
+  lv_obj_set_style_text_font(_hint, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(_hint, lv_color_hex(0x5b6673), 0);
+  lv_obj_align(_hint, LV_ALIGN_BOTTOM_MID, 0, -6);
+  lv_label_set_text(_hint, "UP/DOWN = letter   LEFT/RIGHT = move   PRESS = place   hold BACK = del");
+}
+
+void GameQuenswerScreen::_refreshCells()
+{
+  for (int i = 0; i < kMaxLen; i++) {
+    if (i >= _answerLen) { lv_obj_add_flag(_cells[i], LV_OBJ_FLAG_HIDDEN); continue; }
+    lv_obj_clear_flag(_cells[i], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_t* c = _cells[i];
+    if (_state == ST_SETUP) {
+      bool cur = (i == _pos);
+      char buf[2] = { cur ? _letter : ' ', 0 };
+      lv_label_set_text(c, buf);
+      lv_obj_set_style_bg_color(c, cur ? lv_color_hex(0x2a3654) : lv_color_hex(0x1a2030), 0);
+      lv_obj_set_style_text_color(c, lv_color_white(), 0);
+    } else {
+      char ch = _revealed[i] ? _answer[i] : '_';
+      char buf[2] = { ch, 0 };
+      lv_label_set_text(c, buf);
+      lv_obj_set_style_bg_color(c, _revealed[i] ? lv_color_hex(0x1e7a4b) : lv_color_hex(0x1a2030), 0);
+      lv_obj_set_style_text_color(c, _revealed[i] ? lv_color_black() : lv_color_hex(0x8a94a6), 0);
+    }
+  }
+}
+
+void GameQuenswerScreen::_cycle(int dir)
+{
+  _letter = (dir > 0) ? (_letter == 'Z' ? 'A' : _letter + 1)
+                     : (_letter == 'A' ? 'Z' : _letter - 1);
+  _refreshCells();
+}
+
+void GameQuenswerScreen::_confirmChar()
+{
+  if (_pos >= kMaxLen) return;
+  _answer[_pos++] = _letter;
+  _answerLen = _pos;
+  _answer[_answerLen] = '\0';
+  _refreshCells();
+}
+
+void GameQuenswerScreen::_backspace()
+{
+  if (_pos > 0) {
+    _pos--;
+    _answerLen = _pos;
+    _answer[_pos] = '\0';
+    _refreshCells();
+  }
+}
+
+void GameQuenswerScreen::_finishSetup()
+{
+  if (_answerLen < 3) {
+    lv_label_set_text(_status, "answer needs at least 3 letters");
+    _flashUntil = millis() + 1200;
+    return;
+  }
+  memset(_revealed, 0, sizeof(_revealed));
+  _used = 0;
+  _showHandoff();
+}
+
+void GameQuenswerScreen::_showHandoff()
+{
+  _state = ST_HANDOFF;
+  lv_label_set_text(_hint, "");
+  lv_label_set_text(_status, "");
+  // hide the word from player 2
+  for (int i = 0; i < kMaxLen; i++) lv_label_set_text(_cells[i], " ");
+
+  _overlay = lv_obj_create(_arena);
+  lv_obj_center(_overlay);
+  lv_obj_set_size(_overlay, 240, 140);
+  lv_obj_set_style_bg_color(_overlay, lv_color_hex(0x101a26), 0);
+  lv_obj_set_style_bg_opa(_overlay, LV_OPA_90, 0);
+  lv_obj_set_style_border_color(_overlay, LvglUi::c565(Config.getThemeColor()), 0);
+  lv_obj_set_style_border_width(_overlay, 2, 0);
+  lv_obj_set_style_radius(_overlay, 10, 0);
+  lv_obj_set_style_pad_all(_overlay, 10, 0);
+  lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+  _ovTitle = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(_ovTitle, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_color(_ovTitle, lv_color_white(), 0);
+  lv_obj_align(_ovTitle, LV_ALIGN_TOP_MID, 0, 10);
+  lv_label_set_text(_ovTitle, "PASS TO PLAYER 2");
+
+  char buf[48];
+  snprintf(buf, sizeof(buf), "%u letters   %u attempts", _answerLen, _budget);
+  _ovSub = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(_ovSub, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(_ovSub, lv_color_hex(0x9aa5b1), 0);
+  lv_obj_align(_ovSub, LV_ALIGN_TOP_MID, 0, 44);
+  lv_label_set_text(_ovSub, buf);
+
+  lv_obj_t* h = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(h, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(h, lv_color_hex(0x9aa5b1), 0);
+  lv_obj_align(h, LV_ALIGN_TOP_MID, 0, 72);
+  lv_label_set_text(h, "PRESS = start guessing");
+}
+
+void GameQuenswerScreen::_hideOverlay()
+{
+  if (_overlay) { lv_obj_del(_overlay); _overlay = nullptr; }
+}
+
+void GameQuenswerScreen::_guess()
+{
+  char g = _letter;
+  bool hit = false;
+  for (int i = 0; i < _answerLen; i++) {
+    if (!_revealed[i] && _answer[i] == g) { _revealed[i] = 1; hit = true; }
+  }
+  _used++;
+  _refreshCells();
+
+  bool solved = true;
+  for (int i = 0; i < _answerLen; i++) if (!_revealed[i]) solved = false;
+
+  char buf[64];
+  if (solved) {
+    int score = (int)_answerLen * 10 + (int)(_budget - _used) * 20;
+    if (score > _bestScore) {
+      _bestScore = score;
+      Config.set("quenswer_best", String(score));
+    }
+    int n = Achievement.inc("quenswer_solve");
+    if (n == 1) Achievement.unlock("quenswer_solve");
+    _showResult(true);
+    return;
+  }
+  snprintf(buf, sizeof(buf), "%s — attempts %u / %u",
+           hit ? "hit!" : "miss", _used, _budget);
+  lv_label_set_text(_status, buf);
+  lv_obj_set_style_text_color(_status,
+    hit ? lv_color_hex(0x62d49c) : lv_color_hex(0xff7043), 0);
+  if (_used >= _budget) _showResult(false);
+}
+
+void GameQuenswerScreen::_showResult(bool solved)
+{
+  _state = ST_RESULT;
+  _hideOverlay();
+  lv_label_set_text(_hint, "");
+  for (int i = 0; i < kMaxLen; i++) if (i < _answerLen) _revealed[i] = 1;
+  _refreshCells();
+
+  _overlay = lv_obj_create(_arena);
+  lv_obj_center(_overlay);
+  lv_obj_set_size(_overlay, 240, 130);
+  lv_obj_set_style_bg_color(_overlay, solved ? lv_color_hex(0x0d1a12) : lv_color_hex(0x1a0d0d), 0);
+  lv_obj_set_style_bg_opa(_overlay, LV_OPA_90, 0);
+  lv_obj_set_style_border_color(_overlay, solved ? lv_color_hex(0x2e8b57) : lv_color_hex(0xb0540f), 0);
+  lv_obj_set_style_border_width(_overlay, 2, 0);
+  lv_obj_set_style_radius(_overlay, 10, 0);
+  lv_obj_set_style_pad_all(_overlay, 10, 0);
+  lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+  _ovTitle = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(_ovTitle, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_color(_ovTitle, solved ? lv_color_hex(0x62d49c) : lv_color_hex(0xff7043), 0);
+  lv_obj_align(_ovTitle, LV_ALIGN_TOP_MID, 0, 8);
+  lv_label_set_text(_ovTitle, solved ? "SOLVED!" : "OUT OF ATTEMPTS");
+
+  char buf[48];
+  snprintf(buf, sizeof(buf), "best run: %d", _bestScore);
+  _ovSub = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(_ovSub, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(_ovSub, lv_color_white(), 0);
+  lv_obj_align(_ovSub, LV_ALIGN_TOP_MID, 0, 42);
+  lv_label_set_text(_ovSub, buf);
+
+  lv_obj_t* h = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(h, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(h, lv_color_hex(0x9aa5b1), 0);
+  lv_obj_align(h, LV_ALIGN_TOP_MID, 0, 70);
+  lv_label_set_text(h, "PRESS = new round   BACK = exit");
+}
 
 void GameQuenswerScreen::onUpdate()
 {
-#ifdef DEVICE_HAS_KEYBOARD
-  if (_state == STATE_PLAY && Uni.Keyboard) {
-    while (Uni.Keyboard->available()) {
-      char c = Uni.Keyboard->getKey();
-      if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
-        _typeChar((c >= 'a') ? c - ('a' - 'A') : c);
+  if (Uni.Nav->wasPressed()) {
+    auto dir = Uni.Nav->readDirection();
+
+    if (_state == ST_SETUP) {
+      if      (dir == INavigation::DIR_UP)    _cycle(1);
+      else if (dir == INavigation::DIR_DOWN) _cycle(-1);
+      else if (dir == INavigation::DIR_RIGHT) { if (_pos < kMaxLen) _refreshCells(); }
+      else if (dir == INavigation::DIR_LEFT)  { if (_pos > 0) _backspace(); }
+      else if (dir == INavigation::DIR_BACK)  _backspace();
+      else if (dir == INavigation::DIR_PRESS) _confirmChar();
+      // finishing: pressing at the last cell
+      if (_pos >= kMaxLen && dir == INavigation::DIR_PRESS) _finishSetup();
+    } else if (_state == ST_HANDOFF) {
+      if (dir == INavigation::DIR_PRESS) {
+        _hideOverlay();
+        _state = ST_PLAY;
+        _letter = 'A';
+        _refreshCells();
+        lv_label_set_text(_hint, "cycle a letter, PRESS = guess it");
+        lv_label_set_text(_status, (String("attempts 0 / ") + _budget).c_str());
+      } else if (dir == INavigation::DIR_BACK) { Screen.goBack(); return; }
+    } else if (_state == ST_PLAY) {
+      if      (dir == INavigation::DIR_UP)    _cycle(1);
+      else if (dir == INavigation::DIR_DOWN) _cycle(-1);
+      else if (dir == INavigation::DIR_PRESS) _guess();
+      else if (dir == INavigation::DIR_BACK) { Screen.goBack(); return; }
+    } else if (_state == ST_RESULT) {
+      if (dir == INavigation::DIR_PRESS) {
+        // fresh round: wipe to setup
+        _hideOverlay();
+        _state = ST_SETUP;
+        _pos = 0; _answerLen = 0; _letter = 'A';
+        memset(_answer, 0, sizeof(_answer));
+        _refreshCells();
+        lv_label_set_text(_status, "");
+        lv_label_set_text(_hint, "UP/DOWN = letter   PRESS = place   BACK = delete");
+      } else if (dir == INavigation::DIR_BACK) { Screen.goBack(); return; }
     }
-  }
-#endif
-
-  if (!Uni.Nav->wasPressed()) return;
-  auto dir = Uni.Nav->readDirection();
-
-  switch (_state) {
-
-    case STATE_SETUP:
-      switch (dir) {
-        case INavigation::DIR_UP:
-        case INavigation::DIR_LEFT:
-          _setupIdx = (_setupIdx - 1 + kSetupRows) % kSetupRows; render(); break;
-        case INavigation::DIR_DOWN:
-        case INavigation::DIR_RIGHT:
-          _setupIdx = (_setupIdx + 1) % kSetupRows; render(); break;
-        case INavigation::DIR_PRESS:
-          if      (_setupIdx == 0) _editClue();
-          else if (_setupIdx == 1) _editAnswer();
-          else if (_setupIdx == 2) _editAttempts();
-          else if (_setupIdx == 3) _startGame();
-          else                     Screen.goBack();
-          break;
-        case INavigation::DIR_BACK: Screen.goBack(); break;
-        default: break;
-      }
-      break;
-
-    case STATE_HANDOFF:
-      if (dir == INavigation::DIR_BACK) { _state = STATE_SETUP; render(); }
-      else if (dir != INavigation::DIR_NONE) { _state = STATE_PLAY; render(); }
-      break;
-
-    case STATE_PLAY:
-      switch (dir) {
-#ifndef DEVICE_HAS_KEYBOARD
-        case INavigation::DIR_UP: {
-          int mx = kAlphaLen + (_anyFilled() ? 1 : 0);
-          _cycleIdx = (_cycleIdx - 1 + mx) % mx; render(); break;
-        }
-        case INavigation::DIR_DOWN: {
-          int mx = kAlphaLen + (_anyFilled() ? 1 : 0);
-          _cycleIdx = (_cycleIdx + 1) % mx; render(); break;
-        }
-        case INavigation::DIR_PRESS: _confirmCycle(); break;
-#else
-        case INavigation::DIR_PRESS: _submit(); break;
-#endif
-        case INavigation::DIR_BACK:
-          if (_anyFilled()) { _eraseLast(); _cycleIdx = 0; render(); }
-          else              { _state = STATE_SETUP; render(); }
-          break;
-        default: break;
-      }
-      break;
-
-    case STATE_RESULT:
-      if (dir != INavigation::DIR_NONE) { _state = STATE_SETUP; render(); }
-      break;
   }
 }
 
 void GameQuenswerScreen::onRender()
 {
-  switch (_state) {
-    case STATE_SETUP:   _renderSetup();   break;
-    case STATE_HANDOFF: _renderHandoff(); break;
-    case STATE_PLAY:    _renderPlay();    break;
-    case STATE_RESULT:  _renderResult();  break;
-  }
+  LvglUi::pump();
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+#else  // ── legacy TFT (original from the repo) ───────────────────────────────
 
-int GameQuenswerScreen::_firstEmptyEditable() const
-{
-  for (uint8_t i = 0; i < _answerLen; i++)
-    if (!_locked[i] && _guess[i] == '\0') return i;
-  return -1;
-}
+#include "core/Device.h"
+#include "core/ScreenManager.h"
+#include "core/AchievementManager.h"
+#include "core/ConfigManager.h"
 
-int GameQuenswerScreen::_lastFilledEditable() const
-{
-  for (int i = (int)_answerLen - 1; i >= 0; i--)
-    if (!_locked[i] && _guess[i] != '\0') return i;
-  return -1;
-}
+#include "legacy_game_quenswer.inc"
 
-// Score rewards harder puzzles: quadratic in answer length, multiplied by how
-// tight the attempt budget was and how efficiently it was solved.
-long GameQuenswerScreen::_computeScore() const
-{
-  int  L    = _editableCount;
-  int  used = _used;
-  int  maxA = _maxAttempts;
-  long lengthPts = (long)L * L * 10;
-
-  float eff, diffMul;
-  if (maxA > 0) {
-    eff     = (float)(maxA - used + 1) / (float)maxA;   // 1.0 == solved first try
-    diffMul = 1.0f + (float)L / (float)maxA;            // few tries vs length == harder
-  } else {
-    eff     = (float)L / (float)(L + used);             // unlimited: fewer guesses == better
-    diffMul = 1.2f;
-  }
-  if (eff < 0.1f) eff = 0.1f;
-  if (eff > 1.0f) eff = 1.0f;
-
-  return (long)(lengthPts * (0.4f + 1.6f * eff) * diffMul);
-}
-
-const char* GameQuenswerScreen::_rankTitle() const
-{
-  if (_score >= 1500) return "MASTERMIND";
-  if (_score >= 800)  return "GENIUS";
-  if (_score >= 400)  return "SHARP";
-  if (_score >= 150)  return "CLEVER";
-  return "SOLVED";
-}
-
-// Wordle-style feedback for a guessed letter at a given position.
-uint16_t GameQuenswerScreen::_histColor(char c, uint8_t pos) const
-{
-  if (pos < _answerLen && c == _answer[pos]) return TFT_DARKGREEN;   // right spot
-  for (uint8_t i = 0; i < _answerLen; i++)
-    if (c == _answer[i]) return TFT_ORANGE;                          // wrong spot
-  return TFT_DARKGREY;                                               // absent
-}
-
-// ── Setup actions (Player 1) ─────────────────────────────────────────────────
-
-void GameQuenswerScreen::_editClue()
-{
-  String s = InputTextAction::popup("Clue (max 20)", _clue);
-  if (!InputTextAction::wasCancelled()) {
-    if (s.length() > kMaxLen) s = s.substring(0, kMaxLen);
-    _clue = s;
-  }
-  render();
-}
-
-void GameQuenswerScreen::_editAnswer()
-{
-  String s = InputTextAction::popup("Answer (max 20)", String(_answer));
-  if (!InputTextAction::wasCancelled()) {
-    s.trim();
-    s.toUpperCase();
-    if (s.length() > kMaxLen) s = s.substring(0, kMaxLen);
-    _answerLen = (uint8_t)s.length();
-    for (uint8_t i = 0; i < _answerLen; i++) _answer[i] = s[i];
-    _answer[_answerLen] = '\0';
-  }
-  render();
-}
-
-void GameQuenswerScreen::_editAttempts()
-{
-  int n = InputNumberAction::popup("Attempts (0=inf)", 0, 99, _maxAttempts);
-  if (!InputNumberAction::wasCancelled()) _maxAttempts = (uint8_t)n;
-  render();
-}
-
-void GameQuenswerScreen::_startGame()
-{
-  // Lock non-letters as free hints; letters become the guessable cells.
-  _editableCount = 0;
-  for (uint8_t i = 0; i < _answerLen; i++) {
-    _locked[i] = !_isLetter(_answer[i]);
-    _guess[i]  = _locked[i] ? _answer[i] : '\0';
-    if (!_locked[i]) _editableCount++;
-  }
-
-  if (_editableCount == 0) {
-    ShowStatusAction::show("Set an answer with letters", 1500);
-    render();
-    return;
-  }
-
-  _used      = 0;
-  _cycleIdx  = 0;
-  _win       = false;
-  _score     = 0;
-  _histCount = 0;
-  _state     = STATE_HANDOFF;
-  render();
-}
-
-// ── Play actions (Player 2) ──────────────────────────────────────────────────
-
-void GameQuenswerScreen::_typeChar(char c)
-{
-  int idx = _firstEmptyEditable();
-  if (idx < 0) return;
-  _guess[idx] = c;
-  render();
-}
-
-void GameQuenswerScreen::_confirmCycle()
-{
-  if (_cycleIdx == kAlphaLen) { _eraseLast(); _cycleIdx = 0; render(); return; }
-
-  int idx = _firstEmptyEditable();
-  if (idx < 0) return;
-  _guess[idx] = kAlphaDB[_cycleIdx];
-  _cycleIdx   = 0;
-
-  if (_firstEmptyEditable() < 0) _submit();   // row full → auto guess
-  else                           render();
-}
-
-void GameQuenswerScreen::_eraseLast()
-{
-  int idx = _lastFilledEditable();
-  if (idx >= 0) _guess[idx] = '\0';
-}
-
-void GameQuenswerScreen::_pushHistory(const char* word)
-{
-  if (_histCount < kMaxHistory) _histCount++;
-  for (uint8_t i = _histCount - 1; i > 0; i--)
-    memcpy(_history[i], _history[i - 1], kMaxLen + 1);
-  strncpy(_history[0], word, kMaxLen);
-  _history[0][kMaxLen] = '\0';
-}
-
-void GameQuenswerScreen::_submit()
-{
-  if (_firstEmptyEditable() >= 0) return;   // not all cells filled yet
-
-  // Snapshot the full attempt (revealed + typed) before clearing misses.
-  char word[kMaxLen + 1];
-  for (uint8_t i = 0; i < _answerLen; i++)
-    word[i] = _locked[i] ? _answer[i] : _guess[i];
-  word[_answerLen] = '\0';
-  _pushHistory(word);
-
-  _used++;
-
-  bool allSolved = true;
-  for (uint8_t i = 0; i < _answerLen; i++) {
-    if (_locked[i]) continue;
-    if (_guess[i] == _answer[i]) _locked[i] = true;   // correct + placed → sticky
-    else { _guess[i] = '\0'; allSolved = false; }     // clear for the next attempt
-  }
-
-  if (allSolved) {
-    _win   = true;
-    _score = _computeScore();
-    _state = STATE_RESULT;
-    if (Uni.Speaker) Uni.Speaker->playWin();
-    render();
-    return;
-  }
-
-  if (_maxAttempts > 0 && _used >= _maxAttempts) {
-    _win   = false;
-    _state = STATE_RESULT;
-    if (Uni.Speaker) Uni.Speaker->playLose();
-    render();
-    return;
-  }
-
-  _cycleIdx = 0;
-  render();
-}
-
-// ── Render ────────────────────────────────────────────────────────────────────
-
-void GameQuenswerScreen::_renderSetup()
-{
-#ifdef USE_LVGL_SHELL
-  if (!_scene.ensure(Uni.Lcd, bodyW(), bodyH())) return;
-  Sprite& sp = _scene.sprite();
-#else
-  Sprite sp(&Uni.Lcd);
-  sp.createSprite(bodyW(), bodyH());
 #endif
-  sp.fillSprite(TFT_BLACK);
-
-  sp.setTextDatum(TC_DATUM);
-  sp.setTextSize(1);
-  sp.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  sp.drawString("Player 1 - set the puzzle", bodyW() / 2, 2);
-
-  char ansVal[16];
-  if (_answerLen == 0) snprintf(ansVal, sizeof(ansVal), "(none)");
-  else                 snprintf(ansVal, sizeof(ansVal), "hidden (%u)", (unsigned)_answerLen);
-
-  char attVal[12];
-  if (_maxAttempts == 0) snprintf(attVal, sizeof(attVal), "Unlimited");
-  else                   snprintf(attVal, sizeof(attVal), "%u", (unsigned)_maxAttempts);
-
-  const char* labels[kSetupRows] = { "Clue", "Answer", "Attempts", "Start", "Exit" };
-  String      values[kSetupRows] = { _clue.length() ? _clue : String("(none)"),
-                                     String(ansVal), String(attVal), String(), String() };
-
-  const int top    = 16;
-  const int rowH   = (bodyH() - top) / kSetupRows;
-  const uint16_t theme = Config.getThemeColor();
-
-  for (int i = 0; i < kSetupRows; i++) {
-    int  y    = top + i * rowH;
-    bool sel  = (i == _setupIdx);
-    if (sel) sp.fillRoundRect(2, y + 1, bodyW() - 4, rowH - 2, 3, theme);
-
-    uint16_t fg = sel ? TFT_WHITE : TFT_LIGHTGREY;
-    uint16_t bg = sel ? theme : TFT_BLACK;
-
-    if (i >= 3) {   // Start / Exit — centered button rows
-      sp.setTextDatum(MC_DATUM);
-      sp.setTextColor(fg, bg);
-      sp.drawString(labels[i], bodyW() / 2, y + rowH / 2);
-    } else {
-      sp.setTextDatum(ML_DATUM);
-      sp.setTextColor(fg, bg);
-      sp.drawString(labels[i], 6, y + rowH / 2);
-
-      String v = values[i];
-      int maxChars = (bodyW() - 16) / 6 - (int)strlen(labels[i]) - 1;
-      if (maxChars > 0 && (int)v.length() > maxChars) v = v.substring(0, maxChars);
-      sp.setTextDatum(MR_DATUM);
-      sp.setTextColor(sel ? TFT_WHITE : TFT_DARKGREY, bg);
-      sp.drawString(v.c_str(), bodyW() - 6, y + rowH / 2);
-    }
-  }
-
-#ifdef USE_LVGL_SHELL
-  _scene.flush();
-#else
-  sp.pushSprite(bodyX(), bodyY());
-  sp.deleteSprite();
-#endif
-}
-
-void GameQuenswerScreen::_renderHandoff()
-{
-#ifdef USE_LVGL_SHELL
-  if (!_scene.ensure(Uni.Lcd, bodyW(), bodyH())) return;
-  Sprite& sp = _scene.sprite();
-#else
-  Sprite sp(&Uni.Lcd);
-  sp.createSprite(bodyW(), bodyH());
-#endif
-  sp.fillSprite(TFT_BLACK);
-
-  const int cx = bodyW() / 2;
-
-  sp.setTextDatum(TC_DATUM);
-  sp.setTextSize(2);
-  sp.setTextColor(Config.getThemeColor(), TFT_BLACK);
-  sp.drawString("PASS TO", cx, bodyH() / 2 - 34);
-  sp.drawString("PLAYER 2", cx, bodyH() / 2 - 16);
-
-  sp.setTextSize(1);
-  sp.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  char info[40];
-  snprintf(info, sizeof(info), "%u letters  -  %s", (unsigned)_editableCount,
-           _maxAttempts == 0 ? "unlimited tries" : "limited tries");
-  sp.drawString(info, cx, bodyH() / 2 + 12);
-
-  sp.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  sp.setTextDatum(BC_DATUM);
-  sp.drawString("Press to begin", cx, bodyH() - 2);
-
-#ifdef USE_LVGL_SHELL
-  _scene.flush();
-#else
-  sp.pushSprite(bodyX(), bodyY());
-  sp.deleteSprite();
-#endif
-}
-
-void GameQuenswerScreen::_renderPlay()
-{
-#ifdef DEVICE_HAS_KEYBOARD
-  constexpr bool noKb = false;
-#else
-  constexpr bool noKb = true;
-#endif
-
-  const int W = bodyW(), H = bodyH();
-#ifdef USE_LVGL_SHELL
-  if (!_scene.ensure(Uni.Lcd, W, H)) return;
-  Sprite& sp = _scene.sprite();
-#else
-  Sprite sp(&Uni.Lcd);
-  sp.createSprite(W, H);
-#endif
-  sp.fillSprite(TFT_BLACK);
-
-  // Tries indicator (top-right)
-  char tries[14];
-  if (_maxAttempts == 0) snprintf(tries, sizeof(tries), "Tries: INF");
-  else                   snprintf(tries, sizeof(tries), "Tries: %u", (unsigned)(_maxAttempts - _used));
-  sp.setTextSize(1);
-  sp.setTextDatum(TR_DATUM);
-  sp.setTextColor(_maxAttempts && (_maxAttempts - _used) <= 1 ? TFT_RED : TFT_LIGHTGREY, TFT_BLACK);
-  sp.drawString(tries, W - 2, 2);
-  int triesW = sp.textWidth(tries) + 6;
-
-  // Clue (top-left, truncated to remaining width)
-  String clueLine = String("Clue: ") + (_clue.length() ? _clue : String("(none)"));
-  int clueMax = (W - triesW - 4) / 6;
-  if (clueMax > 0 && (int)clueLine.length() > clueMax) clueLine = clueLine.substring(0, clueMax);
-  sp.setTextDatum(TL_DATUM);
-  sp.setTextColor(Config.getThemeColor(), TFT_BLACK);
-  sp.drawString(clueLine.c_str(), 2, 2);
-
-  sp.drawFastHLine(2, 13, W - 4, 0x2104);
-
-  // Letter grid (wraps to fit width)
-  const int cellW = 14, cellH = 16, gap = 2, step = cellW + gap;
-  int cols = W / step;
-  if (cols < 1) cols = 1;
-  if (cols > _answerLen) cols = _answerLen;
-  int rows  = (_answerLen + cols - 1) / cols;
-  int gridW = cols * step - gap;
-  int gx0   = (W - gridW) / 2;
-  int gy0   = 18;
-
-  int cursor = _firstEmptyEditable();
-
-  for (uint8_t i = 0; i < _answerLen; i++) {
-    int r = i / cols, c = i % cols;
-    int x = gx0 + c * step;
-    int y = gy0 + r * (cellH + gap);
-
-    char     shown = '\0';
-    uint16_t bg;
-    if (_locked[i]) {
-      bg = kColLocked; shown = _answer[i];
-    } else if ((int)i == cursor) {
-      if (noKb && _cycleIdx == kAlphaLen) { bg = kColErase;  shown = '<'; }
-      else if (noKb)                      { bg = kColCursor; shown = kAlphaDB[_cycleIdx]; }
-      else                                { bg = kColCursor; shown = _guess[i]; }
-    } else if (_guess[i] != '\0') {
-      bg = kColFilled; shown = _guess[i];
-    } else {
-      bg = kColEmpty;
-    }
-
-    sp.fillRoundRect(x, y, cellW, cellH, 2, bg);
-    sp.setTextDatum(MC_DATUM);
-    if (shown != '\0') {
-      char buf[2] = { shown, '\0' };
-      sp.setTextColor(TFT_WHITE, bg);
-      sp.drawString(buf, x + cellW / 2, y + cellH / 2);
-    } else {
-      sp.setTextColor(TFT_DARKGREY, bg);
-      sp.drawString("_", x + cellW / 2, y + cellH / 2);
-    }
-
-    if (noKb && (int)i == cursor) {
-      int mid = x + cellW / 2;
-      sp.fillTriangle(mid, y - 4, mid - 3, y - 1, mid + 3, y - 1, TFT_LIGHTGREY);
-      sp.fillTriangle(mid, y + cellH + 4, mid - 3, y + cellH + 1, mid + 3, y + cellH + 1, TFT_LIGHTGREY);
-    }
-  }
-
-  // Previous guesses (most recent first), colour-coded, fitted to one row each.
-  if (_histCount > 0 && _answerLen > 0) {
-    const int chipH = 9, lineH = 11, hintTop = H - (noKb ? 19 : 11);
-    int cw = (W - 4) / _answerLen;
-    if (cw > 10) cw = 10;
-    if (cw < 4)  cw = 4;
-    int rowW = cw * _answerLen;
-    int sx   = (W - rowW) / 2;
-    if (sx < 0) sx = 0;
-    int hy = gy0 + rows * (cellH + gap) + 3;
-
-    sp.setTextSize(1);
-    sp.setTextDatum(MC_DATUM);
-    for (uint8_t k = 0; k < _histCount && hy + chipH <= hintTop; k++) {
-      const char* w = _history[k];
-      for (uint8_t i = 0; i < _answerLen; i++) {
-        int      cx2 = sx + i * cw;
-        uint16_t col = _histColor(w[i], i);
-        sp.fillRoundRect(cx2, hy, cw - 1, chipH, 1, col);
-        if (cw >= 6 && w[i] != '\0') {
-          char buf[2] = { w[i], '\0' };
-          sp.setTextColor(TFT_WHITE, col);
-          sp.drawString(buf, cx2 + (cw - 1) / 2, hy + chipH / 2);
-        }
-      }
-      hy += lineH;
-    }
-  }
-
-  sp.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  if (noKb) {
-    sp.setTextDatum(BL_DATUM);
-    sp.drawString("[Up/Dn] Pick  [Press] Place", 0, H - 9);
-    sp.drawString("[Back] Erase", 0, H - 1);
-  } else {
-    sp.setTextDatum(BC_DATUM);
-    sp.drawString("Type  [Enter] Guess  [Back] Erase", W / 2, H - 1);
-  }
-
-#ifdef USE_LVGL_SHELL
-  _scene.flush();
-#else
-  sp.pushSprite(bodyX(), bodyY());
-  sp.deleteSprite();
-#endif
-}
-
-void GameQuenswerScreen::_renderResult()
-{
-  const int W = bodyW(), H = bodyH();
-#ifdef USE_LVGL_SHELL
-  if (!_scene.ensure(Uni.Lcd, W, H)) return;
-  Sprite& sp = _scene.sprite();
-#else
-  Sprite sp(&Uni.Lcd);
-  sp.createSprite(W, H);
-#endif
-  sp.fillSprite(TFT_BLACK);
-  const int cx = W / 2;
-
-  // Build the result as a vertical stack so it scales to any body height
-  // (the Cardputer body is only ~110 px tall).
-  struct Item { String text; uint8_t size; uint16_t color; };
-  Item items[5];
-  uint8_t n = 0;
-
-  char buf[40];
-  items[n++] = { String(_win ? "YOU WIN!" : "GAME OVER"), 2,
-                 (uint16_t)(_win ? Config.getThemeColor() : TFT_RED) };
-  items[n++] = { String("Answer: ") + _answer, 1, TFT_WHITE };
-  if (_win) {
-    items[n++] = { String(_rankTitle()), 2, TFT_YELLOW };
-    snprintf(buf, sizeof(buf), "%ld pts", _score);
-    items[n++] = { String(buf), 2, Config.getThemeColor() };
-    if (_maxAttempts == 0) snprintf(buf, sizeof(buf), "%u letters - %u guesses", (unsigned)_editableCount, (unsigned)_used);
-    else                   snprintf(buf, sizeof(buf), "%u letters - %u/%u tries", (unsigned)_editableCount, (unsigned)_used, (unsigned)_maxAttempts);
-    items[n++] = { String(buf), 1, TFT_LIGHTGREY };
-  } else {
-    snprintf(buf, sizeof(buf), "Out of tries (%u used)", (unsigned)_used);
-    items[n++] = { String(buf), 1, TFT_LIGHTGREY };
-  }
-
-  // Per-item width fit: drop size-2 lines that would overflow.
-  for (uint8_t i = 0; i < n; i++) {
-    sp.setTextSize(items[i].size);
-    if (items[i].size > 1 && sp.textWidth(items[i].text.c_str()) > W - 4)
-      items[i].size = 1;
-  }
-
-  auto stackH = [&]() { int h = 0; for (uint8_t i = 0; i < n; i++) h += items[i].size * 8 + 4; return h; };
-
-  const int hintH = 10;
-  const int avail = H - hintH - 2;
-  if (stackH() > avail)                       // still too tall → shrink all but the title
-    for (uint8_t i = 1; i < n; i++) items[i].size = 1;
-
-  int y = 2 + (stackH() < avail ? (avail - stackH()) / 2 : 0);
-  sp.setTextDatum(TC_DATUM);
-  for (uint8_t i = 0; i < n; i++) {
-    sp.setTextSize(items[i].size);
-    sp.setTextColor(items[i].color, TFT_BLACK);
-    sp.drawString(items[i].text.c_str(), cx, y);
-    y += items[i].size * 8 + 4;
-  }
-
-  sp.setTextSize(1);
-  sp.setTextDatum(BC_DATUM);
-  sp.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  sp.drawString("Press to continue", cx, H - 2);
-
-#ifdef USE_LVGL_SHELL
-  _scene.flush();
-#else
-  sp.pushSprite(bodyX(), bodyY());
-  sp.deleteSprite();
-#endif
-}

@@ -1,6 +1,71 @@
 #pragma once
 
 #include "ui/templates/BaseScreen.h"
+
+#ifdef USE_LVGL_SHELL
+// ─────────────────────────────────────────────────────────────────────────────
+// Quenswer — native LVGL build. Two-player letter quiz: P1 sets the answer
+// (stick char-cycler) and an attempt budget, P2 guesses letter by letter
+// (hangman-style reveals). Longer answers + tighter budgets score higher.
+// ─────────────────────────────────────────────────────────────────────────────
+#include <lvgl.h>
+#include "ui/lvgl/LvglUi.h"
+
+class GameQuenswerScreen : public BaseScreen
+{
+public:
+  const char* title()     override { return "Quenswer"; }
+  bool inhibitPowerSave() override { return true; }
+  bool inhibitPowerOff()  override { return true; }
+
+  void onInit()   override;
+  void onUpdate() override;
+  void onRender() override;
+
+private:
+  enum State { ST_SETUP, ST_HANDOFF, ST_PLAY, ST_RESULT };
+
+  static constexpr uint8_t kMaxLen = 14;
+  static constexpr uint8_t kMaxTries = 6;
+
+  State   _state = ST_SETUP;
+  char    _answer[kMaxLen + 1] = {};
+  uint8_t _answerLen = 0;
+  char    _revealed[kMaxLen + 1] = {};
+  uint8_t _pos = 0;         // setup cursor
+  char    _letter = 'A';    // cycled char
+  uint8_t _budget = 6;      // attempts for P2
+  uint8_t _used = 0;
+  uint32_t _flashUntil = 0;
+  int      _bestScore = 0;
+
+  lv_obj_t* _arena = nullptr;
+  lv_obj_t* _title = nullptr;
+  lv_obj_t* _cellsCont = nullptr;
+  lv_obj_t* _cells[kMaxLen] = {};
+  lv_obj_t* _status = nullptr;
+  lv_obj_t* _hint = nullptr;
+  lv_obj_t* _overlay = nullptr;
+  lv_obj_t* _ovTitle = nullptr;
+  lv_obj_t* _ovSub = nullptr;
+
+  void _build();
+  void _refreshCells();
+  void _cycle(int dir);
+  void _confirmChar();
+  void _backspace();
+  void _finishSetup();
+  void _showHandoff();
+  void _showResult(bool solved);
+  void _hideOverlay();
+  void _guess();
+};
+
+#else  // legacy — original from the repository
+
+// ── Legacy: original header from the repository (verbatim) ──
+
+#include "ui/templates/BaseScreen.h"
 #ifdef USE_LVGL_SHELL
 #include "ui/lvgl/SpriteCanvas.h"
 #endif
@@ -79,3 +144,5 @@ private:
   SpriteCanvas _scene;
 #endif
 };
+
+#endif

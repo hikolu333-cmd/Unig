@@ -1,6 +1,67 @@
 #pragma once
 
 #include "ui/templates/BaseScreen.h"
+
+#ifdef USE_LVGL_SHELL
+// ─────────────────────────────────────────────────────────────────────────────
+// Number Guess — native LVGL build. Big value label, hint line (higher/lower),
+// UP/DOWN = ±1, LEFT/RIGHT = ±10, PRESS = submit, unlimited/limited by stage.
+// ─────────────────────────────────────────────────────────────────────────────
+#include <lvgl.h>
+#include "ui/lvgl/LvglUi.h"
+
+class GameNumberGuessScreen : public BaseScreen
+{
+public:
+  const char* title()     override { return "Number Guess"; }
+  bool inhibitPowerSave() override { return true; }
+  bool inhibitPowerOff()  override { return true; }
+
+  void onInit()   override;
+  void onUpdate() override;
+  void onRender() override;
+
+private:
+  enum State { ST_MENU, ST_PLAY, ST_RESULT, ST_SCORES };
+
+  static constexpr uint8_t kDiffN = 4;
+  static const char* const kDiffNames[kDiffN];
+  static constexpr int kMaxVal[kDiffN]  = { 99, 999, 9999, 9999 };
+  static constexpr int kTrials[kDiffN]  = { 0, 8, 10, 12 };   // 0 = unlimited
+  static constexpr uint8_t kMenuN = 4;
+
+  State   _state = ST_MENU;
+  int8_t  _menuIdx = 0;
+  uint8_t _diff = 0;
+  int     _target = 0;
+  int     _guess  = 0;
+  int     _tries  = 0;
+  bool    _lastHigh = false;   // direction of the last hint
+  int     _best[kDiffN] = {};
+
+  lv_obj_t* _arena = nullptr;
+  lv_obj_t* _valueLbl = nullptr;
+  lv_obj_t* _hintLbl  = nullptr;
+  lv_obj_t* _triesLbl = nullptr;
+  lv_obj_t* _overlay = nullptr;
+  lv_obj_t* _ovRows[kMenuN] = {};
+  uint8_t  _ovN = 0;
+
+  void _build();
+  void _showMenu();
+  void _hideOverlay();
+  void _showResult(bool win);
+  void _showScores();
+  void _startPlay();
+  void _submit();
+  void _paintValue();
+};
+
+#else  // legacy — original repo implementation
+
+// ── Legacy: original header from the repository (verbatim) ──
+
+#include "ui/templates/BaseScreen.h"
 #ifdef USE_LVGL_SHELL
 #include "ui/lvgl/SpriteCanvas.h"
 #endif
@@ -93,3 +154,5 @@ private:
   Sprite* _lvSpr();   // defined in the cpp: the panel
 #endif
 };
+
+#endif

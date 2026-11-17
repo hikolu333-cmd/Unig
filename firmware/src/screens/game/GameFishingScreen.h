@@ -1,6 +1,79 @@
 #pragma once
 
 #include "ui/templates/BaseScreen.h"
+
+#ifdef USE_LVGL_SHELL
+// ─────────────────────────────────────────────────────────────────────────────
+// Fishing — native LVGL build. Cast → random bite window → timing bar: a
+// marker sweeps, PRESS inside the green zone hooks the fish; rarer fish have
+// narrower zones and bite sooner. Session score, best in Config.
+// ─────────────────────────────────────────────────────────────────────────────
+#include <lvgl.h>
+#include "ui/lvgl/LvglUi.h"
+
+class GameFishingScreen : public BaseScreen
+{
+public:
+  const char* title()     override { return "Fishing"; }
+  bool inhibitPowerSave() override { return true; }
+  bool inhibitPowerOff()  override { return true; }
+
+  void onInit()   override;
+  void onUpdate() override;
+  void onRender() override;
+
+private:
+  enum State { ST_MENU, ST_CAST, ST_BITE, ST_REEL, ST_CAUGHT, ST_ESCAPED, ST_RESULT };
+  enum FishType { FISH_COMMON = 0, FISH_RARE, FISH_LEGENDARY };
+
+  static constexpr uint8_t kMenuN = 3;
+
+  State    _state = ST_MENU;
+  int8_t   _menuIdx = 0;
+  int      _sessionScore = 0;
+  int      _catchCount   = 0;
+  int      _best = 0;
+  FishType _fishType = FISH_COMMON;
+  int      _fishScore = 0;
+  uint32_t _biteAtMs = 0;      // when the bite window opens
+  uint32_t _biteUntilMs = 0;
+  uint32_t _stateT0 = 0;
+  // timing bar
+  int16_t  _barW = 240, _barX = 0, _barY = 0;
+  uint16_t _greenW = 60, _greenX = 0;
+  float    _markerPos = 0;
+  int8_t   _markerDir = 1;
+  uint32_t _markerLastMs = 0;
+  // reel minigame
+  uint8_t  _hits = 0, _hitsNeeded = 0;
+  uint32_t _flashUntil = 0;
+
+  lv_obj_t* _arena = nullptr;
+  lv_obj_t* _statusLbl = nullptr;
+  lv_obj_t* _scoreLbl = nullptr;
+  lv_obj_t* _barBg = nullptr;
+  lv_obj_t* _barGreen = nullptr;
+  lv_obj_t* _marker = nullptr;
+  lv_obj_t* _overlay = nullptr;
+  lv_obj_t* _ovRows[kMenuN] = {};
+
+  void _build();
+  void _showMenu();
+  void _hideOverlay();
+  void _showResult();
+  void _startCast();
+  void _openBite();
+  void _hookCheck();
+  void _tickMarker();
+  void _syncBar();
+  void _syncWidgets();
+};
+
+#else  // legacy — original from the repository
+
+// ── Legacy: original header from the repository (verbatim) ──
+
+#include "ui/templates/BaseScreen.h"
 #ifdef USE_LVGL_SHELL
 #include "ui/lvgl/SpriteCanvas.h"
 #endif
@@ -119,3 +192,5 @@ private:
   int _by() { return bodyY(); }
 #endif
 };
+
+#endif

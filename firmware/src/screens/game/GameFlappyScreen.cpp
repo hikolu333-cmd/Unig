@@ -1,3 +1,400 @@
+//
+// Flappy Bird — native LVGL build (USE_LVGL_SHELL). Physics identical to the
+// legacy build; rendering is pure widgets: bird = rounded lv_obj, pipes = two
+// rects per slot, score = label, menus = overlay panels. Only moved regions
+// redraw. The legacy TFT path stays below untouched for non-LVGL boards.
+//
+
+#include "GameFlappyScreen.h"
+#include "core/Device.h"
+#include "core/ScreenManager.h"
+#include "core/AchievementManager.h"
+#include "core/ConfigManager.h"
+
+#ifdef USE_LVGL_SHELL
+
+#include <lvgl.h>
+
+namespace {
+lv_color_t col16(uint16_t c) { return LvglUi::c565(c); }
+}
+
+void GameFlappyScreen::onInit()
+{
+  _best = Config.get("flappy_best", "0").toInt();
+  _buildArena();
+  _showMenu();
+}
+
+void GameFlappyScreen::_buildArena()
+{
+  lv_obj_t* parent = LvglUi::viewParent();
+  _arenaW = lv_obj_get_width(parent);
+  _arenaH = lv_obj_get_height(parent);
+  if (_arenaW <= 0) _arenaW = 320;
+  if (_arenaH <= 0) _arenaH = 240;
+
+  _arena = lv_obj_create(parent);
+  lv_obj_set_pos(_arena, 0, 0);
+  lv_obj_set_size(_arena, _arenaW, _arenaH);
+  lv_obj_set_style_bg_color(_arena, lv_color_hex(0x0c1420), 0);
+  lv_obj_set_style_bg_opa(_arena, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(_arena, 0, 0);
+  lv_obj_set_style_pad_all(_arena, 0, 0);
+  lv_obj_set_style_radius(_arena, 0, 0);
+  lv_obj_clear_flag(_arena, LV_OBJ_FLAG_SCROLLABLE);
+
+  // pipes (hidden until spawned)
+  for (int i = 0; i < kMaxPipes; i++) {
+    _pipeT[i] = lv_obj_create(_arena);
+    lv_obj_set_style_bg_color(_pipeT[i], lv_color_hex(0x2e8b57), 0);
+    lv_obj_set_style_bg_opa(_pipeT[i], LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_pipeT[i], 0, 0);
+    lv_obj_set_style_radius(_pipeT[i], 0, 0);
+    lv_obj_add_flag(_pipeT[i], LV_OBJ_FLAG_HIDDEN);
+
+    _pipeB[i] = lv_obj_create(_arena);
+    lv_obj_set_style_bg_color(_pipeB[i], lv_color_hex(0x2e8b57), 0);
+    lv_obj_set_style_bg_opa(_pipeB[i], LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_pipeB[i], 0, 0);
+    lv_obj_set_style_radius(_pipeB[i], 0, 0);
+    lv_obj_add_flag(_pipeB[i], LV_OBJ_FLAG_HIDDEN);
+  }
+
+  // ground strip
+  _ground = lv_obj_create(_arena);
+  lv_obj_set_pos(_ground, 0, _arenaH - kGroundH);
+  lv_obj_set_size(_ground, _arenaW, kGroundH);
+  lv_obj_set_style_bg_color(_ground, lv_color_hex(0x8b5a2b), 0);
+  lv_obj_set_style_bg_opa(_ground, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(_ground, 0, 0);
+  lv_obj_set_style_radius(_ground, 0, 0);
+
+  // bird
+  _bird = lv_obj_create(_arena);
+  lv_obj_set_pos(_bird, kBirdX, _arenaH / 2);
+  lv_obj_set_size(_bird, kBirdW, kBirdH);
+  lv_obj_set_style_bg_color(_bird, lv_color_hex(0xffd54f), 0);
+  lv_obj_set_style_bg_opa(_bird, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(_bird, 0, 0);
+  lv_obj_set_style_radius(_bird, LV_RADIUS_CIRCLE, 0);
+  lv_obj_add_flag(_bird, LV_OBJ_FLAG_HIDDEN);
+
+  // score
+  _scoreL = lv_label_create(_arena);
+  lv_obj_set_style_text_font(_scoreL, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_color(_scoreL, lv_color_white(), 0);
+  lv_obj_align(_scoreL, LV_ALIGN_TOP_MID, 0, 4);
+  lv_label_set_text(_scoreL, "");
+
+  lv_obj_move_to_index(_scoreL, -1);   // keep score above pipes
+}
+
+// ── overlays ────────────────────────────────────────────────────────────────
+
+void GameFlappyScreen::_hideOverlay()
+{
+  if (_overlay) {
+    lv_obj_add_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_del(_overlay);
+    _overlay = nullptr;
+    _ovRowCount = 0;
+  }
+}
+
+void GameFlappyScreen::_showMenu()
+{
+  _state = STATE_MENU;
+  _hideOverlay();
+
+  _overlay = lv_obj_create(_arena);
+  lv_obj_center(_overlay);
+  lv_obj_set_size(_overlay, 200, 150);
+  lv_obj_set_style_bg_color(_overlay, lv_color_hex(0x101a26), 0);
+  lv_obj_set_style_bg_opa(_overlay, LV_OPA_90, 0);
+  lv_obj_set_style_border_color(_overlay, col16(Config.getThemeColor()), 0);
+  lv_obj_set_style_border_width(_overlay, 2, 0);
+  lv_obj_set_style_radius(_overlay, 8, 0);
+  lv_obj_set_style_pad_all(_overlay, 8, 0);
+  lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+  const char* rows[] = { "Start", "Best Score", "Exit" };
+  _menuIdx = 0;
+  _ovRowCount = 3;
+  for (int i = 0; i < 3; i++) {
+    _ovRows[i] = lv_label_create(_overlay);
+    lv_obj_set_style_text_font(_ovRows[i], &lv_font_montserrat_16, 0);
+    lv_label_set_text(_ovRows[i], rows[i]);
+    lv_obj_align(_ovRows[i], LV_ALIGN_TOP_MID, 0, i == 0 ? 10 : 10 + i * 34);
+  }
+  // title
+  lv_obj_t* t = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(t, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(t, col16(Config.getThemeColor()), 0);
+  lv_label_set_text(t, "FLAPPY");
+  lv_obj_align(t, LV_ALIGN_TOP_MID, 0, -34);
+  lv_obj_set_parent(t, _overlay);
+
+  lv_obj_add_flag(_bird, LV_OBJ_FLAG_HIDDEN);
+  lv_label_set_text(_scoreL, "");
+}
+
+void GameFlappyScreen::_showResult()
+{
+  _state = STATE_RESULT;
+  if (_score > _best) {
+    _best = _score;
+    Config.set("flappy_best", String(_best));
+  }
+  _hideOverlay();
+
+  _overlay = lv_obj_create(_arena);
+  lv_obj_center(_overlay);
+  lv_obj_set_size(_overlay, 220, 150);
+  lv_obj_set_style_bg_color(_overlay, lv_color_hex(0x1a0d0d), 0);
+  lv_obj_set_style_bg_opa(_overlay, LV_OPA_90, 0);
+  lv_obj_set_style_border_color(_overlay, lv_color_hex(0xb0540f), 0);
+  lv_obj_set_style_border_width(_overlay, 2, 0);
+  lv_obj_set_style_radius(_overlay, 8, 0);
+  lv_obj_set_style_pad_all(_overlay, 10, 0);
+  lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* t = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(t, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_color(t, lv_color_hex(0xff7043), 0);
+  lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 6);
+  lv_label_set_text(t, "GAME OVER");
+
+  char buf[48];
+  snprintf(buf, sizeof(buf), "Score  %d    Best  %d", _score, _best);
+  lv_obj_t* s = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(s, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(s, lv_color_white(), 0);
+  lv_obj_align(s, LV_ALIGN_TOP_MID, 0, 44);
+  lv_label_set_text(s, buf);
+
+  lv_obj_t* h = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(h, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(h, lv_color_hex(0x9aa5b1), 0);
+  lv_obj_align(h, LV_ALIGN_TOP_MID, 0, 76);
+  lv_label_set_text(h, "PRESS = retry   BACK = menu");
+
+  _ovRowCount = 0;
+}
+
+void GameFlappyScreen::_showScores()
+{
+  _state = STATE_SCORES;
+  _hideOverlay();
+
+  _overlay = lv_obj_create(_arena);
+  lv_obj_center(_overlay);
+  lv_obj_set_size(_overlay, 180, 110);
+  lv_obj_set_style_bg_color(_overlay, lv_color_hex(0x101a26), 0);
+  lv_obj_set_style_bg_opa(_overlay, LV_OPA_90, 0);
+  lv_obj_set_style_border_width(_overlay, 2, 0);
+  lv_obj_set_style_radius(_overlay, 8, 0);
+  lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* t = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(t, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(t, col16(Config.getThemeColor()), 0);
+  lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 8);
+  lv_label_set_text(t, "BEST SCORE");
+
+  char buf[24];
+  snprintf(buf, sizeof(buf), "%d", _best);
+  lv_obj_t* s = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(s, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_color(s, lv_color_white(), 0);
+  lv_obj_align(s, LV_ALIGN_TOP_MID, 0, 40);
+  lv_label_set_text(s, buf);
+
+  lv_obj_t* h = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(h, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(h, lv_color_hex(0x9aa5b1), 0);
+  lv_obj_align(h, LV_ALIGN_TOP_MID, 0, 74);
+  lv_label_set_text(h, "any key = back");
+  _ovRowCount = 0;
+}
+
+// ── gameplay ─────────────────────────────────────────────────────────────────
+
+void GameFlappyScreen::_startPlay()
+{
+  _gapH        = _arenaH / 3;
+  _pipeSpeed   = 2;
+  _pipeInterval = 1600;
+  _birdY       = _arenaH / 2.0f;
+  _velocity    = 0;
+  _score       = 0;
+  _pipeCount   = 0;
+  _pipeTimer   = 0;
+  _lastTickMs  = millis();
+  _state       = STATE_PLAY;
+
+  _hideOverlay();
+  lv_obj_clear_flag(_bird, LV_OBJ_FLAG_HIDDEN);
+  lv_label_set_text(_scoreL, "0");
+  _spawnPipe();
+  _syncWidgets();
+
+  int n = Achievement.inc("flappy_first_play");
+  if (n == 1) Achievement.unlock("flappy_first_play");
+}
+
+void GameFlappyScreen::_flap()
+{
+  _velocity = kFlapForce;
+}
+
+void GameFlappyScreen::_spawnPipe()
+{
+  if (_pipeCount >= kMaxPipes) return;
+  int h     = _arenaH - kGroundH;
+  int minGY = _gapH / 2 + 6;
+  int maxGY = h - _gapH / 2 - 6;
+  _pipes[_pipeCount++] = { (int16_t)_arenaW, (uint8_t)(minGY + random(maxGY - minGY + 1)), false };
+}
+
+bool GameFlappyScreen::_collision() const
+{
+  int h  = _arenaH - kGroundH;
+  int by = (int)_birdY;
+  if (by <= 0 || by + kBirdH >= h) return true;
+
+  for (uint8_t i = 0; i < _pipeCount; i++) {
+    int px = _pipes[i].x;
+    if (kBirdX + kBirdW <= px || kBirdX >= px + kPipeW) continue;
+    int gapTop = _pipes[i].gapY - _gapH / 2;
+    int gapBot = _pipes[i].gapY + _gapH / 2;
+    if (by < gapTop || by + kBirdH > gapBot) return true;
+  }
+  return false;
+}
+
+void GameFlappyScreen::_tick()
+{
+  _velocity += kGravity;
+  _birdY    += _velocity;
+
+  for (uint8_t i = 0; i < _pipeCount; i++) {
+    _pipes[i].x -= _pipeSpeed;
+    if (!_pipes[i].scored && _pipes[i].x + kPipeW < kBirdX) {
+      _pipes[i].scored = true;
+      _score++;
+      char buf[12];
+      snprintf(buf, sizeof(buf), "%d", _score);
+      lv_label_set_text(_scoreL, buf);
+      if (Uni.Speaker && !Uni.Speaker->isPlaying()) Uni.Speaker->playRandomTone(0, 50);
+      if (_score == 10)  Achievement.unlock("flappy_score_10");
+      if (_score == 25)  Achievement.unlock("flappy_score_25");
+      if (_score == 50)  Achievement.unlock("flappy_score_50");
+      if (_score == 100) Achievement.unlock("flappy_score_100");
+    }
+  }
+
+  while (_pipeCount > 0 && _pipes[0].x < -kPipeW) {
+    for (uint8_t i = 1; i < _pipeCount; i++) _pipes[i - 1] = _pipes[i];
+    _pipeCount--;
+  }
+
+  _pipeTimer += 33;
+  if (_pipeTimer >= _pipeInterval) {
+    _pipeTimer = 0;
+    _spawnPipe();
+  }
+
+  if (_collision()) {
+    if (Uni.Speaker) Uni.Speaker->playLose();
+    _showResult();
+  }
+}
+
+void GameFlappyScreen::_syncWidgets()
+{
+  if (_state == STATE_PLAY) {
+    lv_obj_set_y(_bird, (int16_t)_birdY);
+    for (uint8_t i = 0; i < kMaxPipes; i++) {
+      if (i >= _pipeCount) {
+        lv_obj_add_flag(_pipeT[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(_pipeB[i], LV_OBJ_FLAG_HIDDEN);
+        continue;
+      }
+      int gapTop = _pipes[i].gapY - _gapH / 2;
+      int gapBot = _pipes[i].gapY + _gapH / 2;
+      lv_obj_clear_flag(_pipeT[i], LV_OBJ_FLAG_HIDDEN);
+      lv_obj_clear_flag(_pipeB[i], LV_OBJ_FLAG_HIDDEN);
+      lv_obj_set_pos(_pipeT[i], _pipes[i].x, 0);
+      lv_obj_set_size(_pipeT[i], kPipeW, gapTop);
+      lv_obj_set_pos(_pipeB[i], _pipes[i].x, gapBot);
+      lv_obj_set_size(_pipeB[i], kPipeW, (_arenaH - kGroundH) - gapBot);
+    }
+  }
+}
+
+// ── frame loop ──────────────────────────────────────────────────────────────
+
+void GameFlappyScreen::onUpdate()
+{
+  // menu focus styling
+  if (_state == STATE_MENU && _overlay) {
+    for (int i = 0; i < _ovRowCount; i++) {
+      lv_color_t fg = (i == _menuIdx) ? lv_color_black()
+                                      : lv_color_white();
+      lv_color_t bg = (i == _menuIdx) ? col16(Config.getThemeColor())
+                                      : lv_color_hex(0x101a26);
+      lv_obj_set_style_text_color(_ovRows[i], fg, 0);
+      lv_obj_set_style_bg_color(_ovRows[i], bg, 0);
+      lv_obj_set_style_bg_opa(_ovRows[i], LV_OPA_COVER, 0);
+      lv_obj_set_style_pad_hor(_ovRows[i], 12, 0);
+      lv_obj_set_style_pad_ver(_ovRows[i], 4, 0);
+      lv_obj_set_style_radius(_ovRows[i], 4, 0);
+    }
+  }
+
+  if (Uni.Nav->wasPressed()) {
+    auto dir = Uni.Nav->readDirection();
+
+    if (_state == STATE_MENU) {
+      if (dir == INavigation::DIR_UP)   { _menuIdx = (_menuIdx + 2) % 3; }
+      if (dir == INavigation::DIR_DOWN) { _menuIdx = (_menuIdx + 1) % 3; }
+      if (dir == INavigation::DIR_PRESS) {
+        if      (_menuIdx == 0) _startPlay();
+        else if (_menuIdx == 1) _showScores();
+        else                    { Screen.goBack(); return; }
+      }
+    } else if (_state == STATE_PLAY) {
+      if (dir == INavigation::DIR_PRESS || dir == INavigation::DIR_UP) _flap();
+      else if (dir == INavigation::DIR_BACK) _showMenu();
+    } else if (_state == STATE_RESULT) {
+      if (dir == INavigation::DIR_PRESS) _startPlay();
+      else if (dir == INavigation::DIR_BACK) _showMenu();
+    } else if (_state == STATE_SCORES) {
+      if (dir != INavigation::DIR_NONE) _showMenu();
+    }
+  }
+
+  // physics tick (play state) — 33 ms
+  if (_state == STATE_PLAY) {
+    uint32_t now = millis();
+    if (now - _lastTickMs >= 33) {
+      _lastTickMs = now;
+      _tick();
+    }
+  }
+}
+
+void GameFlappyScreen::onRender()
+{
+  _syncWidgets();
+  LvglUi::pump();   // legacy screens must pump LVGL themselves (no shell loop here)
+}
+
+#else  // ── legacy TFT build (unchanged) ──────────────────────────────────────
+
+// ── Original legacy TFT implementation (from the repo, pre-LVGL port) ──
+
 #include "GameFlappyScreen.h"
 #include "core/Device.h"
 #include "core/ConfigManager.h"
@@ -505,3 +902,4 @@ void GameFlappyScreen::_renderHighScores()
   lcd.setTextDatum(BC_DATUM);
   lcd.drawString("Press to go back", _bx() + bodyW() / 2, _by() + bodyH() - 1);
 }
+#endif  // USE_LVGL_SHELL

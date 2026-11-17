@@ -1,664 +1,261 @@
+//
+// Wordle — native LVGL build (USE_LVGL_SHELL). Letter grid as rounded label
+// cells; stick-only input (no keyboard): UP/DOWN cycle the letter, RIGHT next
+// slot, LEFT previous, PRESS submit, BACK delete. Standard marking rules.
+//
+
 #include "GameWordleScreen.h"
 #include "core/Device.h"
-#include "core/ConfigManager.h"
 #include "core/ScreenManager.h"
 #include "core/AchievementManager.h"
-#include "screens/game/GameMenuScreen.h"
-#include "utils/wordle/en.h"
 #include "utils/wordle/en_common.h"
-#include "utils/wordle/id.h"
 #include "utils/wordle/id_common.h"
 
-static constexpr char kAlphaDB[26] = {
-  'A','B','C','D','E','F','G','H','I','J','K','L','M',
-  'N','O','P','Q','R','S','T','U','V','W','X','Y','Z'
-};
+#ifdef USE_LVGL_SHELL
 
-static const uint16_t kColors[4] = {
-  TFT_DARKGREY, TFT_RED, TFT_ORANGE, TFT_GREEN
-};
+void GameWordleScreen::onInit()
+{
+  _pickWord();
+  _build();
+}
 
-// ── Lifecycle ───────────────────────────────────────────────────────────────
+void GameWordleScreen::_pickWord()
+{
+  const char (*db)[6] = (_lang == LANG_ID) ? WORDLE_DB_ID_COMMON : WORDLE_DB_EN_COMMON;
+  uint16_t n = (uint16_t)(sizeof(WORDLE_DB_ID_COMMON) / sizeof(WORDLE_DB_ID_COMMON[0]));
+  if (_lang == LANG_EN)
+    n = (uint16_t)(sizeof(WORDLE_DB_EN_COMMON) / sizeof(WORDLE_DB_EN_COMMON[0]));
+  _seed = (uint32_t)random(1000000);
+  memcpy(_target, db[_seed % n], kWordLen);
+  _target[kWordLen] = '\0';
+}
 
-void GameWordleScreen::onInit()  { render(); }
+void GameWordleScreen::_build()
+{
+  lv_obj_t* parent = LvglUi::viewParent();
+
+  _arena = lv_obj_create(parent);
+  lv_obj_set_pos(_arena, 0, 0);
+  lv_obj_set_size(_arena, lv_obj_get_width(parent), lv_obj_get_height(parent));
+  lv_obj_set_style_bg_color(_arena, lv_color_hex(0x12131f), 0);
+  lv_obj_set_style_bg_opa(_arena, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(_arena, 0, 0);
+  lv_obj_set_style_pad_all(_arena, 0, 0);
+  lv_obj_set_style_radius(_arena, 0, 0);
+  lv_obj_clear_flag(_arena, LV_OBJ_FLAG_SCROLLABLE);
+
+  const int cellW = 34, cellH = 38, gap = 6;
+  const int gridW = kWordLen * cellW + (kWordLen - 1) * gap;
+  const int gridH = kMaxTries * cellH + (kMaxTries - 1) * gap;
+  const int x0 = (lv_obj_get_width(_arena) - gridW) / 2;
+  const int y0 = (lv_obj_get_height(_arena) - gridH) / 2 - 8;
+
+  for (int r = 0; r < kMaxTries; r++) {
+    for (int c = 0; c < kWordLen; c++) {
+      lv_obj_t* cell = lv_label_create(_arena);
+      lv_obj_set_pos(cell, x0 + c * (cellW + gap), y0 + r * (cellH + gap));
+      lv_obj_set_size(cell, cellW, cellH);
+      lv_obj_set_style_text_font(cell, &lv_font_montserrat_16, 0);
+      lv_obj_set_style_text_align(cell, LV_TEXT_ALIGN_CENTER, 0);
+      lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, 0);
+      lv_obj_set_style_bg_color(cell, lv_color_hex(0x1b2438), 0);
+      lv_obj_set_style_border_color(cell, lv_color_hex(0x2c3650), 0);
+      lv_obj_set_style_border_width(cell, 1, 0);
+      lv_obj_set_style_radius(cell, 6, 0);
+      lv_label_set_text(cell, " ");
+      _cells[r][c] = cell;
+    }
+  }
+
+  _hint = lv_label_create(_arena);
+  lv_obj_set_style_text_font(_hint, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(_hint, lv_color_hex(0x7a8496), 0);
+  lv_obj_align(_hint, LV_ALIGN_BOTTOM_MID, 0, -6);
+  lv_label_set_text(_hint, "UP/DOWN = letter   LEFT/RIGHT = move   PRESS = try");
+
+  _row = 0; _col = 0; _letter = 'A';
+  _refreshRow(0);
+}
+
+void GameWordleScreen::_cycle(int dir)
+{
+  char l = _letter;
+  do {
+    l = (dir > 0) ? (l == 'Z' ? 'A' : l + 1)
+                  : (l == 'A' ? 'Z' : l - 1);
+  } while (_lang == LANG_ID &&
+           !(l == 'A' || l == 'B' || l == 'C' || l == 'D' || l == 'E' || l == 'F' ||
+             l == 'G' || l == 'H' || l == 'I' || l == 'J' || l == 'K' || l == 'L' ||
+             l == 'M' || l == 'N' || l == 'O' || l == 'P' || l == 'R' || l == 'S' ||
+             l == 'T' || l == 'U' || l == 'V' || l == 'W' || l == 'Y'));
+  _letter = l;
+  _entry[_col] = l;
+  _refreshRow(_row);
+}
+
+void GameWordleScreen::_refreshRow(uint8_t row)
+{
+  for (int c = 0; c < kWordLen; c++) {
+    lv_obj_t* cell = _cells[row][c];
+    if (row < _row) continue;                    // submitted rows keep their marks
+    bool isCursor = (c == _col);
+    char ch = isCursor ? _letter : _entry[c];
+    char buf[2] = { ch, 0 };
+    lv_label_set_text(cell, buf);
+    lv_obj_set_style_bg_color(cell,
+      isCursor ? lv_color_hex(0x2a3654) : lv_color_hex(0x1b2438), 0);
+    lv_obj_set_style_border_color(cell,
+      isCursor ? LvglUi::c565(Config.getThemeColor()) : lv_color_hex(0x2c3650), 0);
+    lv_obj_set_style_text_color(cell, lv_color_white(), 0);
+  }
+}
+
+void GameWordleScreen::_markRow(uint8_t row)
+{
+  // Standard Wordle marking with a consumed-letter pass for the yellows.
+  bool used[kWordLen] = {};
+  for (int c = 0; c < kWordLen; c++) {
+    if (_grid[row][c] == _target[c]) { _marks[row][c] = 2; used[c] = true; }
+    else _marks[row][c] = 0;
+  }
+  for (int c = 0; c < kWordLen; c++) {
+    if (_marks[row][c] == 2) continue;
+    for (int t = 0; t < kWordLen; t++) {
+      if (!used[t] && _grid[row][c] == _target[t]) {
+        _marks[row][c] = 1;
+        used[t] = true;
+        break;
+      }
+    }
+  }
+  for (int c = 0; c < kWordLen; c++) {
+    lv_obj_t* cell = _cells[row][c];
+    char buf[2] = { (char)(_grid[row][c] - ('a' - 'A')), 0 };
+    lv_label_set_text(cell, buf);
+    switch (_marks[row][c]) {
+      case 2:  lv_obj_set_style_bg_color(cell, lv_color_hex(0x2e8b57), 0);
+               lv_obj_set_style_text_color(cell, lv_color_black(), 0); break;
+      case 1:  lv_obj_set_style_bg_color(cell, lv_color_hex(0xd4a017), 0);
+               lv_obj_set_style_text_color(cell, lv_color_black(), 0); break;
+      default: lv_obj_set_style_bg_color(cell, lv_color_hex(0x242a3a), 0);
+               lv_obj_set_style_text_color(cell, lv_color_hex(0x8a94a6), 0); break;
+    }
+    lv_obj_set_style_border_color(cell, lv_color_hex(0x2c3650), 0);
+  }
+}
+
+void GameWordleScreen::_submitRow()
+{
+  if (_state != ST_PLAY) return;
+  for (int c = 0; c < kWordLen; c++) _grid[_row][c] = (char)(_entry[c] - 'A' + 'a');
+  _grid[_row][kWordLen] = '\0';
+  // (all five letters were chosen explicitly — no blanks possible)
+
+  _markRow(_row);
+
+  bool win = strncmp(_grid[_row], _target, kWordLen) == 0;
+  if (win) {
+    if (Uni.Speaker) Uni.Speaker->playWin();
+    int n = Achievement.inc((String("wordle_win_") + (_lang == LANG_EN ? "en" : "id")).c_str());
+    if (n == 1) Achievement.unlock((String("wordle_win_") + (_lang == LANG_EN ? "en" : "id")).c_str());
+    _showEnd(true);
+    return;
+  }
+  _row++;
+  if (_row >= kMaxTries) {
+    if (Uni.Speaker) Uni.Speaker->playLose();
+    _showEnd(false);
+    return;
+  }
+  _col = 0;
+  _refreshRow(_row);
+}
+
+void GameWordleScreen::_hideOverlay()
+{
+  if (_overlay) { lv_obj_del(_overlay); _overlay = nullptr; }
+}
+
+void GameWordleScreen::_showEnd(bool win)
+{
+  _state = win ? ST_WIN : ST_LOSS;
+
+  _overlay = lv_obj_create(_arena);
+  lv_obj_center(_overlay);
+  lv_obj_set_size(_overlay, 240, 130);
+  lv_obj_set_style_bg_color(_overlay, win ? lv_color_hex(0x0d1a12) : lv_color_hex(0x1a0d0d), 0);
+  lv_obj_set_style_bg_opa(_overlay, LV_OPA_90, 0);
+  lv_obj_set_style_border_color(_overlay, win ? lv_color_hex(0x2e8b57) : lv_color_hex(0xb0540f), 0);
+  lv_obj_set_style_border_width(_overlay, 2, 0);
+  lv_obj_set_style_radius(_overlay, 10, 0);
+  lv_obj_set_style_pad_all(_overlay, 10, 0);
+  lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+  _ovTitle = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(_ovTitle, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_color(_ovTitle, win ? lv_color_hex(0x62d49c) : lv_color_hex(0xff7043), 0);
+  lv_obj_align(_ovTitle, LV_ALIGN_TOP_MID, 0, 10);
+  lv_label_set_text(_ovTitle, win ? "SOLVED!" : "OUT OF TRIES");
+
+  char buf[24];
+  snprintf(buf, sizeof(buf), "word: %s", _target);
+  _ovSub = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(_ovSub, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(_ovSub, lv_color_white(), 0);
+  lv_obj_align(_ovSub, LV_ALIGN_TOP_MID, 0, 44);
+  lv_label_set_text(_ovSub, buf);
+
+  lv_obj_t* h = lv_label_create(_overlay);
+  lv_obj_set_style_text_font(h, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(h, lv_color_hex(0x9aa5b1), 0);
+  lv_obj_align(h, LV_ALIGN_TOP_MID, 0, 72);
+  lv_label_set_text(h, "PRESS = again   BACK = exit");
+}
 
 void GameWordleScreen::onUpdate()
 {
-#ifdef DEVICE_HAS_KEYBOARD
-  if (_state == STATE_PLAY) {
-    while (Uni.Keyboard->available()) {
-      char c = Uni.Keyboard->getKey();
-      if (c == '\b' || c == 127)                          { _backChar();    break; }
-      else if (c == '\n' || c == '\r')                    { _submitGuess(); break; }
-      else if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
-        _handleKeyInput((c >= 'a') ? c - ('a' - 'A') : c);
-    }
-  }
-#endif
+  if (Uni.Nav->wasPressed()) {
+    auto dir = Uni.Nav->readDirection();
 
-  if (!Uni.Nav->wasPressed()) return;
-  auto dir = Uni.Nav->readDirection();
-
-  if (_state == STATE_MENU) {
-    switch (dir) {
-      case INavigation::DIR_UP:    _menuIdx = (_menuIdx - 1 + kMenuItems) % kMenuItems; render(); break;
-      case INavigation::DIR_DOWN:  _menuIdx = (_menuIdx + 1) % kMenuItems;              render(); break;
-      case INavigation::DIR_PRESS:
-        if      (_menuIdx == 0) _initGame();
-        else if (_menuIdx == 1) { _useCommon  = !_useCommon;                    render(); }
-        else if (_menuIdx == 2) { _difficulty = (_difficulty + 1) % kDiffCount; render(); }
-        else if (_menuIdx == 3) {
-          _hsViewDiff = _difficulty;
-          _loadScores(_hsViewDiff);
-          _state = STATE_HIGH_SCORES;
-          render();
-        } else {
-          Screen.goBack();
-        }
-        break;
-      case INavigation::DIR_BACK: Screen.goBack(); break;
-      default: break;
-    }
-
-  } else if (_state == STATE_PLAY) {
-    switch (dir) {
-#ifndef DEVICE_HAS_KEYBOARD
-      case INavigation::DIR_UP: {
-        int mx = kAlphaLen + (_cursor > 0 ? 1 : 0);
-        _cycleIdx = (_cycleIdx - 1 + mx) % mx; render();
-        break;
+    if (_state == ST_PLAY) {
+      if      (dir == INavigation::DIR_UP)    _cycle(1);
+      else if (dir == INavigation::DIR_DOWN) _cycle(-1);
+      else if (dir == INavigation::DIR_RIGHT) { if (_col < kWordLen - 1) { _col++; _letter = _entry[_col]; _refreshRow(_row); } }
+      else if (dir == INavigation::DIR_LEFT)  { if (_col > 0)           { _col--; _letter = _entry[_col]; _refreshRow(_row); } }
+      else if (dir == INavigation::DIR_BACK)  { if (_col > 0)          { _col--; _letter = _entry[_col]; _refreshRow(_row); } }
+      else if (dir == INavigation::DIR_PRESS) _submitRow();
+    } else {
+      if (dir == INavigation::DIR_PRESS) {
+        // fresh game
+        _hideOverlay();
+        _row = 0; _col = 0; _letter = 'A'; _state = ST_PLAY;
+        memset(_grid, 0, sizeof(_grid));
+        memset(_entry, 'A', sizeof(_entry));
+        _pickWord();
+        for (int r = 0; r < kMaxTries; r++) _refreshRow(r);
+      } else if (dir == INavigation::DIR_BACK) {
+        Screen.goBack();
+        return;
       }
-      case INavigation::DIR_DOWN: {
-        int mx = kAlphaLen + (_cursor > 0 ? 1 : 0);
-        _cycleIdx = (_cycleIdx + 1) % mx; render();
-        break;
-      }
-#endif
-      case INavigation::DIR_PRESS:
-#ifdef DEVICE_HAS_KEYBOARD
-        _submitGuess();
-#else
-        _confirmChar();
-#endif
-        break;
-      case INavigation::DIR_BACK: _backChar(); break;
-      default: break;
-    }
-
-  } else if (_state == STATE_RESULT) {
-    if (dir != INavigation::DIR_NONE) { _state = STATE_MENU; _menuIdx = 0; render(); }
-
-  } else if (_state == STATE_HIGH_SCORES) {
-    switch (dir) {
-      case INavigation::DIR_UP:
-      case INavigation::DIR_LEFT:
-        _hsViewDiff = (_hsViewDiff - 1 + kDiffCount) % kDiffCount;
-        _loadScores(_hsViewDiff);
-        render();
-        break;
-      case INavigation::DIR_DOWN:
-      case INavigation::DIR_RIGHT:
-        _hsViewDiff = (_hsViewDiff + 1) % kDiffCount;
-        _loadScores(_hsViewDiff);
-        render();
-        break;
-      case INavigation::DIR_PRESS:
-      case INavigation::DIR_BACK:
-        _state   = STATE_MENU;
-        _menuIdx = 0;
-        render();
-        break;
-      default: break;
     }
   }
 }
 
 void GameWordleScreen::onRender()
 {
-#ifdef USE_LVGL_SHELL
-  if (!_scene.ensure(Uni.Lcd, bodyW(), bodyH())) return;
-  _spr = &_scene.sprite();
+  LvglUi::pump();
+}
+
+#else  // ── legacy TFT (original from the repo) ───────────────────────────────
+#include "core/ConfigManager.h"
+#include "screens/game/GameMenuScreen.h"
+
+#include "core/Device.h"
+#include "core/ScreenManager.h"
+#include "core/AchievementManager.h"
+#include "utils/wordle/en_common.h"
+#include "utils/wordle/id_common.h"
+
+#include "legacy_game_wordle.inc"
+
 #endif
-  if      (_state == STATE_MENU)         _renderMenu();
-  else if (_state == STATE_PLAY)         _renderPlay();
-  else if (_state == STATE_HIGH_SCORES)  _renderHighScores();
-  else                                   _renderResult();
-#ifdef USE_LVGL_SHELL
-  _scene.flush();
-#endif
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-const char* GameWordleScreen::_diffStr() const
-{
-  switch (_difficulty) {
-    case 0: return "Easy";
-    case 1: return "Medium";
-    case 2: return "Hard";
-    default: return "Easy";
-  }
-}
-
-int GameWordleScreen::_maxAttempts() const
-{
-  switch (_difficulty) {
-    case 0: return 10;
-    case 1: return 7;
-    case 2: return 7;
-    default: return 10;
-  }
-}
-
-int GameWordleScreen::_colorGuess(uint8_t idx, char c) const
-{
-  if (c == '\0') return 0;
-  if (c == _target[idx]) return 3;
-  for (uint8_t i = 0; i < kWordLen; i++)
-    if (c == _target[i]) return 2;
-  return 1;
-}
-
-#ifndef USE_LVGL_SHELL
-Sprite* GameWordleScreen::_lvSpr() { return &Uni.Lcd; }
-#endif
-
-void GameWordleScreen::_initGame()
-{
-  memset(_target, 0, sizeof(_target));
-  memset(_current, 0, sizeof(_current));
-  memset(_history, 0, sizeof(_history));
-  memset(_alphabetUsed, 0, sizeof(_alphabetUsed));
-  _histSize = _totalInputs = _cursor = _cycleIdx = 0;
-  _win     = false;
-  _newRank = -1;
-  _startMs = millis();
-
-  const char (*wordList)[6];
-  uint16_t wordCount;
-  if (_useCommon) {
-    wordList  = (_language == LANG_ID) ? WORDLE_DB_ID_COMMON : WORDLE_DB_EN_COMMON;
-    wordCount = (_language == LANG_ID)
-      ? (uint16_t)(sizeof(WORDLE_DB_ID_COMMON) / sizeof(WORDLE_DB_ID_COMMON[0]))
-      : (uint16_t)(sizeof(WORDLE_DB_EN_COMMON) / sizeof(WORDLE_DB_EN_COMMON[0]));
-  } else {
-    wordList  = (_language == LANG_ID) ? WORDLE_DB_ID : WORDLE_DB_EN;
-    wordCount = (_language == LANG_ID)
-      ? (uint16_t)(sizeof(WORDLE_DB_ID) / sizeof(WORDLE_DB_ID[0]))
-      : (uint16_t)(sizeof(WORDLE_DB_EN) / sizeof(WORDLE_DB_EN[0]));
-  }
-
-  uint16_t idx = (uint16_t)random(wordCount);
-  memcpy(_target, wordList[idx], kWordLen);
-
-  if (_language == LANG_EN) {
-    int n = Achievement.inc("wordle_en_first_play");
-    if (n == 1) Achievement.unlock("wordle_en_first_play");
-  }
-  if (_language == LANG_ID) {
-    int n = Achievement.inc("wordle_id_first_play");
-    if (n == 1) Achievement.unlock("wordle_id_first_play");
-  }
-
-  _loadScores(_difficulty);
-
-  _state = STATE_PLAY;
-  render();
-}
-
-void GameWordleScreen::_pushHistory()
-{
-  if (_histSize < kMaxHistory) _histSize++;
-  for (uint8_t i = _histSize - 1; i > 0; i--)
-    memcpy(_history[i], _history[i - 1], kWordLen);
-  memcpy(_history[0], _current, kWordLen);
-}
-
-void GameWordleScreen::_submitGuess()
-{
-  for (uint8_t i = 0; i < kWordLen; i++)
-    if (_current[i] == '\0') return;
-
-  _pushHistory();
-  // Mark all letters in this guess as used
-  for (uint8_t i = 0; i < kWordLen; i++) {
-    char c = _current[i];
-    if (c >= 'A' && c <= 'Z') _alphabetUsed[c - 'A'] = 1;
-  }
-  _totalInputs++;
-
-  if (memcmp(_current, _target, kWordLen) == 0) {
-    _state = STATE_RESULT; _win = true;
-    uint32_t elapsed = millis() - _startMs;
-    _insertScore((int)_totalInputs, elapsed);
-    _saveScores(_difficulty);
-    if (Uni.Speaker) Uni.Speaker->playWin();
-    if (_totalInputs == 1) Achievement.unlock("wordle_first_try");
-    if (_language == LANG_EN) {
-      int n = Achievement.inc("wordle_en_first_win");
-      if (n == 1) Achievement.unlock("wordle_en_first_win");
-      if (n == 5) Achievement.unlock("wordle_en_win_5");
-    }
-    if (_language == LANG_ID) {
-      int n = Achievement.inc("wordle_id_first_win");
-      if (n == 1) Achievement.unlock("wordle_id_first_win");
-      if (n == 5) Achievement.unlock("wordle_id_win_5");
-    }
-    render(); return;
-  }
-
-  if (_totalInputs >= (uint8_t)_maxAttempts()) {
-    _state = STATE_RESULT; _win = false;
-    if (Uni.Speaker) Uni.Speaker->playLose();
-    render(); return;
-  }
-
-  memset(_current, 0, kWordLen);
-  _cursor = _cycleIdx = 0;
-  render();
-}
-
-void GameWordleScreen::_backChar()
-{
-  if (_cursor <= 0) { _state = STATE_MENU; render(); return; }
-  _current[--_cursor] = '\0';
-  _cycleIdx = 0;
-  render();
-}
-
-void GameWordleScreen::_confirmChar()
-{
-  if (_cycleIdx == kAlphaLen) { _backChar(); return; }
-  _current[_cursor++] = kAlphaDB[_cycleIdx];
-  _cycleIdx = 0;
-  if (_cursor >= kWordLen) _submitGuess();
-  else render();
-}
-
-void GameWordleScreen::_handleKeyInput(char c)
-{
-  if (_cursor >= kWordLen) return;
-  _current[_cursor++] = c;
-  render();
-}
-
-// ── Render ──────────────────────────────────────────────────────────────────
-
-void GameWordleScreen::_renderMenu()
-{
-#ifdef USE_LVGL_SHELL
-  auto& lcd = *_spr;   // game renders into the canvas sprite
-#else
-  auto& lcd = Uni.Lcd;
-#endif
-  bool firstTime = (_prevState != STATE_MENU);
-  if (firstTime) {
-    lcd.fillRect(_bx(), _by(), bodyW(), bodyH(), TFT_BLACK);
-    _prevState      = STATE_MENU;
-    _lastMenuIdx    = -1;
-    _lastDifficulty = 0xFF;
-    _lastUseCommon  = -1;
-  }
-
-  char dbLabel[12];
-  snprintf(dbLabel, sizeof(dbLabel), "DB: %s", _useCommon ? "Common" : "Full");
-  const char* items[kMenuItems] = {"Play", dbLabel, _diffStr(), "High Scores", "Exit"};
-
-  lcd.setTextSize(2);
-  const int lineH  = lcd.fontHeight() + 6;
-  const int startY = (bodyH() - (int)kMenuItems * lineH) / 2;
-
-  for (int i = 0; i < (int)kMenuItems; i++) {
-    bool selNow   = (i == _menuIdx);
-    bool selPrev  = (i == _lastMenuIdx);
-    bool dbRow    = (i == 1 && _lastUseCommon  != (int8_t)_useCommon);
-    bool diffRow  = (i == 2 && _lastDifficulty != _difficulty);
-    if (!firstTime && selNow == selPrev && !dbRow && !diffRow) continue;
-
-    Sprite sp(&lcd);
-    sp.createSprite(bodyW(), lineH);
-    sp.fillSprite(TFT_BLACK);
-    sp.setTextDatum(MC_DATUM);
-    sp.setTextSize(2);
-    sp.setTextColor(selNow ? Config.getThemeColor() : TFT_WHITE, TFT_BLACK);
-    sp.drawString(items[i], bodyW() / 2, lineH / 2);
-    sp.pushSprite(_bx(), _by() + startY + i * lineH);
-    sp.deleteSprite();
-  }
-
-  _lastMenuIdx    = _menuIdx;
-  _lastDifficulty = _difficulty;
-  _lastUseCommon  = (int8_t)_useCommon;
-}
-
-void GameWordleScreen::_renderPlay()
-{
-#ifdef DEVICE_HAS_KEYBOARD
-  constexpr bool noKb = false;
-#else
-  constexpr bool noKb = true;
-#endif
-
-  if (_prevState != STATE_PLAY) {
-    _lvSpr()->fillRect(_bx(), _by(), bodyW(), bodyH(), TFT_BLACK);
-    _prevState = STATE_PLAY;
-  }
-
-  const int arrowH   = noKb ? 8 : 0;
-  const int arrowV   = noKb ? 6 : 0;
-  const int cellW    = 14, cellH = 14, cellStep = 16;
-  const int inputX   = 4;
-  const int inputY   = noKb ? arrowH - 2 : 2;
-  const int histY0   = inputY + cellH + (noKb ? arrowV : 3);
-  const int histRowH = 16;
-  const int maxAtt   = _maxAttempts();
-
-  const int visRows   = min(min((int)kMaxHistory, (bodyH() - histY0) / histRowH), maxAtt);
-  const int panelX    = inputX + kWordLen * cellStep + 4;
-  const int rightZoneW = bodyW() - panelX;
-  const int rightCXLocal = rightZoneW / 2;
-
-  {
-    Sprite sp(_lvSpr());
-    sp.createSprite(panelX, bodyH());
-    sp.fillSprite(TFT_BLACK);
-
-    sp.setTextDatum(MC_DATUM);
-    sp.setTextSize(1);
-
-    if (_cursor > 0) {
-      sp.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-      sp.drawString("<", inputX - 9, inputY + cellH / 2);
-    }
-
-    if (noKb) {
-      const int cx = inputX + _cursor * cellStep + cellW / 2;
-      sp.fillTriangle(cx, inputY - 5, cx - 2, inputY - 2, cx + 2, inputY - 2, TFT_LIGHTGREY);
-      sp.fillTriangle(cx, inputY + cellH + 4, cx - 2, inputY + cellH + 1, cx + 2, inputY + cellH + 1, TFT_LIGHTGREY);
-    }
-
-    for (uint8_t ci = 0; ci < kWordLen; ci++) {
-      const int x      = inputX + ci * cellStep;
-      bool active      = (ci == _cursor);
-      bool eraseActive = active && noKb && (_cycleIdx == kAlphaLen);
-      char c           = _current[ci];
-      if (active && noKb) c = eraseActive ? '<' : kAlphaDB[_cycleIdx];
-
-      uint16_t bg = eraseActive ? TFT_MAROON : (active ? TFT_DARKCYAN : TFT_DARKGREY);
-      sp.fillRoundRect(x, inputY, cellW, cellH, 2, bg);
-      if (c != '\0') {
-        char buf[2] = {c, '\0'};
-        sp.setTextColor(TFT_WHITE, bg);
-        sp.drawString(buf, x + cellW / 2, inputY + cellH / 2);
-      }
-    }
-
-    for (int row = 0; row < visRows; row++) {
-      const int y      = histY0 + row * histRowH + 1;
-      bool hasEntry    = (row < _histSize);
-
-      for (uint8_t ci = 0; ci < kWordLen; ci++) {
-        const int x = inputX + ci * cellStep;
-        char hc     = hasEntry ? _history[row][ci] : '\0';
-        int  color  = hasEntry ? _colorGuess(ci, hc) : 0;
-
-        uint16_t bg = hasEntry ? kColors[color] : TFT_DARKGREY;
-        sp.fillRoundRect(x, y, cellW, cellH, 2, bg);
-        if (hc != '\0') {
-          char buf[2] = {hc, '\0'};
-          sp.setTextColor(TFT_WHITE, bg);
-          sp.drawString(buf, x + cellW / 2, y + cellH / 2);
-        }
-      }
-    }
-
-    sp.pushSprite(_bx(), _by());
-    sp.deleteSprite();
-  }
-
-  const int rightPanelH = 70;
-  {
-    Sprite sp(_lvSpr());
-    sp.createSprite(rightZoneW, rightPanelH);
-    sp.fillSprite(TFT_BLACK);
-
-    sp.setTextDatum(MC_DATUM);
-    sp.setTextSize(1);
-    const int alphaColW  = sp.textWidth("A") + 2;
-    const int alphaLineH = sp.fontHeight() + 2;
-
-    char valBuf[8];
-    sp.setTextDatum(TC_DATUM);
-    sp.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    sp.drawString("Left", rightCXLocal, 2);
-    snprintf(valBuf, sizeof(valBuf), "%d", maxAtt - _totalInputs);
-    sp.setTextSize(2);
-    sp.setTextColor(TFT_WHITE, TFT_BLACK);
-    sp.drawString(valBuf, rightCXLocal, 12);
-
-    sp.setTextSize(1);
-    sp.setTextDatum(TL_DATUM);
-    {
-      constexpr int kRowLen  = 13;
-      const int     rowW     = kRowLen * alphaColW;
-      const int     ax0      = rightCXLocal - rowW / 2;
-      const int     ay0      = 12 + alphaLineH * 2 + 10;
-      for (uint8_t i = 0; i < kAlphaLen; i++) {
-        int x = ax0 + (i % kRowLen) * alphaColW;
-        int y = ay0 + (i / kRowLen) * alphaLineH;
-        char buf[2] = {(char)('A' + i), '\0'};
-        bool grey = (_difficulty >= 2) || _alphabetUsed[i];
-        sp.setTextColor(grey ? TFT_DARKGREY : TFT_WHITE, TFT_BLACK);
-        sp.drawString(buf, x, y);
-      }
-    }
-
-    sp.pushSprite(_bx() + panelX, _by());
-    sp.deleteSprite();
-  }
-}
-
-void GameWordleScreen::_renderResult()
-{
-  if (_prevState == STATE_RESULT) return;
-  _prevState = STATE_RESULT;
-
-#ifdef USE_LVGL_SHELL
-  auto& lcd = *_spr;   // game renders into the canvas sprite
-#else
-  auto& lcd = Uni.Lcd;
-#endif
-  lcd.fillRect(_bx(), _by(), bodyW(), bodyH(), TFT_BLACK);
-
-  const int cx = _bx() + bodyW() / 2;
-  char ans[6] = {}, buf[32];
-  memcpy(ans, _target, kWordLen);
-
-  lcd.setTextDatum(TC_DATUM);
-  lcd.setTextSize(2);
-  lcd.setTextColor(_win ? Config.getThemeColor() : TFT_RED, TFT_BLACK);
-  lcd.drawString(_win ? "YOU WIN!" : "GAME OVER", cx, _by() + 4);
-
-  lcd.drawFastHLine(_bx() + 8, _by() + 24, bodyW() - 16, TFT_DARKGREY);
-
-  lcd.setTextSize(1);
-  lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  lcd.drawString("Answer was", cx, _by() + 28);
-  lcd.setTextSize(2);
-  lcd.setTextColor(TFT_WHITE, TFT_BLACK);
-  lcd.drawString(ans, cx, _by() + 38);
-
-  lcd.setTextSize(1);
-  if (_win) {
-    uint32_t ms   = (_newRank >= 0) ? _scores[_newRank].ms : (millis() - _startMs);
-    uint32_t secs = ms / 1000;
-    uint32_t mins = secs / 60;
-    secs %= 60;
-    snprintf(buf, sizeof(buf), "%d turns  %um%02us", (int)_totalInputs, (unsigned)mins, (unsigned)secs);
-  } else {
-    snprintf(buf, sizeof(buf), "%d turns used", (int)_totalInputs);
-  }
-  lcd.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  lcd.drawString(buf, cx, _by() + 58);
-
-  if (_win && _newRank >= 0) {
-    snprintf(buf, sizeof(buf), "New #%d Best!", _newRank + 1);
-    lcd.setTextSize(2);
-    lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
-    lcd.drawString(buf, cx, _by() + 72);
-  }
-
-  lcd.setTextSize(1);
-  lcd.setTextDatum(BC_DATUM);
-  lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  lcd.drawString("Press to continue", cx, _by() + bodyH() - 2);
-}
-
-// ── Score storage ─────────────────────────────────────────────────────────────
-
-void GameWordleScreen::_loadScores(uint8_t diff)
-{
-  _scoreCount = 0;
-
-  char path[52];
-  const char* lang = (_language == LANG_ID) ? "id" : "en";
-  snprintf(path, sizeof(path), "/unigeek/games/wordle_%s_%d.txt", lang, diff);
-
-  if (!Uni.Storage->exists(path)) return;
-
-  String data = Uni.Storage->readFile(path);
-  int pos = 0;
-  int len = data.length();
-
-  while (pos < len && _scoreCount < kMaxScores) {
-    int nl = data.indexOf('\n', pos);
-    if (nl < 0) nl = len;
-    String line = data.substring(pos, nl);
-    pos = nl + 1;
-    int comma = line.indexOf(',');
-    if (comma < 0) continue;
-    _scores[_scoreCount].turns = line.substring(0, comma).toInt();
-    _scores[_scoreCount].ms    = (uint32_t)line.substring(comma + 1).toInt();
-    _scoreCount++;
-  }
-}
-
-void GameWordleScreen::_saveScores(uint8_t diff)
-{
-  Uni.Storage->makeDir("/unigeek/games");
-
-  char path[52];
-  const char* lang = (_language == LANG_ID) ? "id" : "en";
-  snprintf(path, sizeof(path), "/unigeek/games/wordle_%s_%d.txt", lang, diff);
-
-  String data = "";
-  for (uint8_t i = 0; i < _scoreCount; i++)
-    data += String(_scores[i].turns) + "," + String((int)_scores[i].ms) + "\n";
-
-  Uni.Storage->writeFile(path, data.c_str());
-}
-
-void GameWordleScreen::_insertScore(int turns, uint32_t ms)
-{
-  int8_t insertAt = -1;
-  for (int8_t i = 0; i < (int8_t)_scoreCount; i++) {
-    if (turns < _scores[i].turns || (turns == _scores[i].turns && ms < _scores[i].ms)) {
-      insertAt = i;
-      break;
-    }
-  }
-  if (insertAt < 0) {
-    if (_scoreCount < kMaxScores) insertAt = (int8_t)_scoreCount;
-    else { _newRank = -1; return; }
-  }
-  uint8_t newCount = _scoreCount < kMaxScores ? _scoreCount + 1 : kMaxScores;
-  for (int8_t i = (int8_t)newCount - 1; i > insertAt; i--)
-    _scores[i] = _scores[i - 1];
-  _scores[insertAt].turns = turns;
-  _scores[insertAt].ms    = ms;
-  _scoreCount = newCount;
-  _newRank    = insertAt;
-}
-
-// ── _renderHighScores ─────────────────────────────────────────────────────────
-
-void GameWordleScreen::_renderHighScores()
-{
-  static constexpr const char* kDiffNames[3] = { "Easy", "Medium", "Hard" };
-
-#ifdef USE_LVGL_SHELL
-  auto& lcd = *_spr;   // game renders into the canvas sprite
-#else
-  auto& lcd = Uni.Lcd;
-#endif
-  bool firstTime = (_prevState != STATE_HIGH_SCORES);
-  if (firstTime) {
-    lcd.fillRect(_bx(), _by(), bodyW(), bodyH(), TFT_BLACK);
-    _prevState      = STATE_HIGH_SCORES;
-    _lastHsViewDiff = 0xFF;
-
-    lcd.setTextSize(1);
-    lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    lcd.setTextDatum(BC_DATUM);
-    lcd.drawString("[Up/Dn] Switch diff  [Back] Return", _bx() + bodyW() / 2, _by() + bodyH() - 1);
-  }
-
-  if (_lastHsViewDiff == _hsViewDiff) return;
-  _lastHsViewDiff = _hsViewDiff;
-
-  const int headerH = 14;
-  const int lineH   = 14;
-  const int startY  = 18;
-  const int listH   = lineH * kMaxScores + 4;
-
-  {
-    Sprite sp(&lcd);
-    sp.createSprite(bodyW(), headerH);
-    sp.fillSprite(TFT_BLACK);
-    sp.setTextSize(1);
-    sp.setTextDatum(TC_DATUM);
-    sp.setTextColor(Config.getThemeColor(), TFT_BLACK);
-    char title[24];
-    snprintf(title, sizeof(title), "Top %s", kDiffNames[_hsViewDiff]);
-    sp.drawString(title, bodyW() / 2, 2);
-
-    char pageBuf[8];
-    snprintf(pageBuf, sizeof(pageBuf), "%u/%u", _hsViewDiff + 1, kDiffCount);
-    sp.setTextDatum(TR_DATUM);
-    sp.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    sp.drawString(pageBuf, bodyW() - 1, 2);
-    sp.pushSprite(_bx(), _by());
-    sp.deleteSprite();
-  }
-
-  {
-    Sprite sp(&lcd);
-    sp.createSprite(bodyW(), listH);
-    sp.fillSprite(TFT_BLACK);
-    sp.setTextSize(1);
-
-    char buf[24];
-    for (uint8_t i = 0; i < kMaxScores; i++) {
-      bool     has = (i < _scoreCount);
-      uint16_t col = has ? (i == 0 ? TFT_YELLOW : TFT_WHITE) : TFT_DARKGREY;
-      sp.setTextColor(col, TFT_BLACK);
-
-      sp.setTextDatum(TL_DATUM);
-      snprintf(buf, sizeof(buf), "#%u", i + 1);
-      sp.drawString(buf, 8, i * lineH);
-
-      sp.setTextDatum(TR_DATUM);
-      if (has) {
-        uint32_t secs = _scores[i].ms / 1000;
-        uint32_t mins = secs / 60;
-        secs %= 60;
-        snprintf(buf, sizeof(buf), "%dt  %um%02us", _scores[i].turns, (unsigned)mins, (unsigned)secs);
-      } else {
-        snprintf(buf, sizeof(buf), "--");
-      }
-      sp.drawString(buf, bodyW() - 8, i * lineH);
-    }
-    sp.pushSprite(_bx(), _by() + startY);
-    sp.deleteSprite();
-  }
-}

@@ -4,6 +4,8 @@
 
 #include "IRScreen.h"
 #include "ui/actions/ShowStatusAction.h"
+#include "utils/ir/PowerBlast.h"
+#include "utils/uart/UartFileManager.h"
 
 #if defined(DEVICE_M5STICK_S3)
 #include <M5PM1.h>
@@ -85,7 +87,7 @@ void IRScreen::_showMenu() {
   // Re-read pins in case they were changed under Settings > Pin Setting.
   _txPin = (int8_t)PinConfig.getInt(PIN_CONFIG_IR_TX, PIN_CONFIG_IR_TX_DEFAULT);
   _rxPin = (int8_t)PinConfig.getInt(PIN_CONFIG_IR_RX, PIN_CONFIG_IR_RX_DEFAULT);
-  setItems(_menuItems, 3, _menuReturnIndex);
+  setItems(_menuItems, 7, _menuReturnIndex);
 }
 
 void IRScreen::onUpdate() {
@@ -173,7 +175,12 @@ void IRScreen::onItemSelected(uint8_t index) {
   if (_state == STATE_MENU) {
     _menuReturnIndex = index;
     switch (index) {
-      case 0: { // Receive
+      case 0: { // Quick Off — instant, no diving: saved window + top codes
+        _quickOff();
+        break;
+      }
+
+      case 1: { // Receive
         if (_rxPin < 0) {
           ShowStatusAction::show("RX pin not set");
           render();
@@ -195,7 +202,7 @@ void IRScreen::onItemSelected(uint8_t index) {
         setItems(_recvItems, 0);  // prime pointer once; _showReceiveList uses setCount after this
         break;
       }
-      case 1: { // Send
+      case 2: { // Send
         if (_txPin < 0) {
           ShowStatusAction::show("TX pin not set");
           render();
@@ -209,7 +216,12 @@ void IRScreen::onItemSelected(uint8_t index) {
         _loadBrowseDir(kRootPath);
         break;
       }
-      case 2: { // TV-B-Gone
+      case 3: { // Find Code — sweep in bursts until the user says "it died"
+        _findCode();
+        break;
+      }
+
+      case 4: { // TV-B-Gone
         if (_txPin < 0) {
           ShowStatusAction::show("TX pin not set");
           render();
@@ -250,6 +262,75 @@ void IRScreen::onItemSelected(uint8_t index) {
           ShowStatusAction::show("All codes sent", 1500);
           int n = Achievement.inc("ir_tvbgone_complete");
           if (n == 1) Achievement.unlock("ir_tvbgone_complete");
+        }
+        _showMenu();
+        break;
+      }
+
+      case 5: { // Power Blast — fast volley, or the full universal dump
+        if (_txPin < 0) {
+          ShowStatusAction::show("TX pin not set");
+          render();
+          return;
+        }
+
+#ifdef BOARD_4MB
+        const char* mode = "fast";
+#else
+        static constexpr InputSelectAction::Option modeOpts[] = {
+          {"Fast (475 codes)", "fast"},
+          {"All Devices (3952)", "all"},
+        };
+        const char* mode = InputSelectAction::popup("Blast Mode", modeOpts, 2);
+        if (!mode) { render(); return; }
+        render();
+#endif
+
+        _ir.beginTx(_txPin);
+        _tvbCancelled = false;
+        _activeInstance = this;
+        _state = STATE_POWERBLAST;
+
+        ProgressView::init();
+        const int sent = PowerBlast::blastAll(
+            *_ir.sender(), (strcmp(mode, "all") == 0) ? 1 : 0,
+            _pbCancelCb, _pbProgressCb);
+        _ir.end();
+        ProgressView::finish();
+        _activeInstance = nullptr;
+
+        if (_tvbCancelled && sent < PowerBlast::COUNT) {
+          ShowStatusAction::show("Stopped", 1000);
+        } else {
+          char msg[40];
+          snprintf(msg, sizeof(msg), "Blasted %d power codes", sent);
+          ShowStatusAction::show(msg, 1500);
+          int n = Achievement.inc("ir_power_blast");
+          if (n == 1) Achievement.unlock("ir_power_blast");
+        }
+        _showMenu();
+        break;
+      }
+
+      case 6: { // Instant Off — top-62 net, ~6 s, no dialogs
+        if (_txPin < 0) {
+          ShowStatusAction::show("TX pin not set");
+          render();
+          return;
+        }
+        _ir.beginTx(_txPin);
+        _tvbCancelled = false;
+        _activeInstance = this;
+        _state = STATE_POWERBLAST;
+        ProgressView::init();
+        const int sent = PowerBlast::instantOff(*_ir.sender(), nullptr, _pbCancelCb, _pbProgressCb);
+        _ir.end();
+        ProgressView::finish();
+        _activeInstance = nullptr;
+        {
+          char msg[40];
+          snprintf(msg, sizeof(msg), "%d codes, ~%ds", sent, sent / 10);
+          ShowStatusAction::show(msg, 1500);
         }
         _showMenu();
         break;
@@ -546,6 +627,148 @@ void IRScreen::_tvbProgressCb(uint8_t current, uint8_t total) {
 bool IRScreen::_tvbCancelCb() {
   if (!_activeInstance) return true;
   Uni.update();
+  UartFM.poll();   // remote keyboard/mirror input — blocking loops must drain it
+  LvglUi::pump();  // keep LVGL alive inside the blocking loop (renders progress)
+  if (Uni.Nav->wasPressed()) {
+    auto dir = Uni.Nav->readDirection();
+    if (dir == INavigation::DIR_BACK || dir == INavigation::DIR_PRESS) {
+      _activeInstance->_tvbCancelled = true;
+      return true;
+    }
+  }
+  return false;
+}
+
+// ── Quick Off / Find Code ─────────────────────────────────────────────────────
+
+void IRScreen::_quickOff() {
+  if (_txPin < 0) {
+    ShowStatusAction::show("TX pin not set");
+    render();
+    return;
+  }
+  String spec = Config.get(APP_CONFIG_IR_QUICK_OFF, APP_CONFIG_IR_QUICK_OFF_DEFAULT);
+  _ir.beginTx(_txPin);
+  _tvbCancelled = false;
+  _activeInstance = this;
+  _state = STATE_POWERBLAST;
+  ProgressView::init();
+  const int sent = PowerBlast::instantOff(*_ir.sender(),
+                                          spec.isEmpty() ? nullptr : spec.c_str(),
+                                          _pbCancelCb, _pbProgressCb);
+  _ir.end();
+  ProgressView::finish();
+  _activeInstance = nullptr;
+  char msg[48];
+  snprintf(msg, sizeof(msg), "%s: %d codes", spec.isEmpty() ? "net" : "saved+net", sent);
+  ShowStatusAction::show(msg, 1500);
+  _showMenu();
+}
+
+void IRScreen::_findCode() {
+  if (_txPin < 0) {
+    ShowStatusAction::show("TX pin not set");
+    render();
+    return;
+  }
+#ifdef BOARD_4MB
+  // The universal sweep needs the 390 KB dump — not present on 4 MB boards.
+  ShowStatusAction::show("Not available on 4MB build");
+  render();
+  return;
+#else
+  // Sweep the universal set in ~25-code bursts. PRESS during the run marks
+  // "the TV just died" — the burst window (plus one code of margin on each
+  // side) is saved as the Quick Off window and replayed instantly forever.
+  const int CH = 25;
+  _ir.beginTx(_txPin);
+  _activeInstance = this;
+  _tvbCancelled = false;
+  _state = STATE_FIND_CODE;
+
+  String found;
+  int from = 0;
+  while (from < PowerBlast::COUNT_ALL) {
+    int to = from + CH;
+    if (to > PowerBlast::COUNT_ALL) to = PowerBlast::COUNT_ALL;
+    _tvbCancelled = false;
+    ProgressView::init();
+    char msg[48];
+    snprintf(msg, sizeof(msg), "Burst %d-%d — PRESS = TV died", from + 1, to);
+    ProgressView::progress(msg, from * 100 / PowerBlast::COUNT_ALL);
+
+    for (int i = from; i < to; i++) {
+      if (_pbCancelCb()) break;
+      const PowerBlast::Code& c = PowerBlast::TABLE_ALL[i];
+      PowerBlast::sendCode(*_ir.sender(), c.proto, c.address, c.command, c.bits);
+      delay(50);
+    }
+    if (_tvbCancelled) {
+      // окно найдено: [from-5 .. to]
+      int lo = from - CH;
+      if (lo < 0) lo = 0;
+      found = _quickSpecBuild(lo, to);
+      break;
+    }
+    from = to;
+  }
+
+  _ir.end();
+  ProgressView::finish();
+  _activeInstance = nullptr;
+  _state = STATE_MENU;
+
+  if (found.length()) {
+    Config.set(APP_CONFIG_IR_QUICK_OFF, found);
+    Config.save(Uni.Storage);
+    ShowStatusAction::show("Saved! Quick Off is instant now", 2000);
+    int n = Achievement.inc("ir_quick_off_saved");
+    if (n == 1) Achievement.unlock("ir_quick_off_saved");
+  } else if (from >= PowerBlast::COUNT_ALL) {
+    ShowStatusAction::show("Sweep done, no PRESS caught", 2000);
+  }
+  _showMenu();
+#endif  // !BOARD_4MB
+}
+
+String IRScreen::_quickSpecBuild(int from, int to) {
+#ifdef BOARD_4MB
+  (void)from; (void)to; return String();
+#else
+  String spec;
+  for (int i = from; i < to && i < PowerBlast::COUNT_ALL; i++) {
+    const PowerBlast::Code& c = PowerBlast::TABLE_ALL[i];
+    char part[32];
+    snprintf(part, sizeof(part), "%s:%X:%X:%d;", c.proto, c.address, c.command, c.bits);
+    spec += part;
+    if (spec.length() > 900) break;   // config value budget
+  }
+  return spec;
+#endif  // !BOARD_4MB
+}
+
+// ── Power Blast callbacks ────────────────────────────────────────────────────
+
+void IRScreen::_pbProgressCb(int current, int total) {
+  if (!_activeInstance) return;
+  // Throttle: one text update per ~150 ms — per-code updates churn LVGL's
+  // label buffers thousands of times in a blocking loop with no pump, which
+  // corrupted the widget heap (coredump: lv_obj_construct(obj=0x70006)).
+  static uint32_t s_last = 0;
+  uint32_t now = millis();
+  if (now - s_last < 150) return;
+  s_last = now;
+  int pct = (int)((int32_t)current * 100 / total);
+  char msg[40];
+  snprintf(msg, sizeof(msg), "Blast %d / %d", current, total);
+  ProgressView::progress(msg, pct);
+}
+
+bool IRScreen::_pbCancelCb() {
+  if (!_activeInstance) return true;
+  Uni.update();
+  UartFM.poll();   // remote keyboard/mirror input — blocking loops must drain it
+  LvglUi::pump();  // keep LVGL alive inside the blocking loop (renders progress)
   if (Uni.Nav->wasPressed()) {
     auto dir = Uni.Nav->readDirection();
     if (dir == INavigation::DIR_BACK || dir == INavigation::DIR_PRESS) {

@@ -145,7 +145,8 @@ bool NRF24Screen::inhibitPowerSave() {
   return _state != STATE_MENU;
 }
 bool NRF24Screen::inhibitPowerOff() {
-  return _state == STATE_JAMMER_RUNNING || _state == STATE_SPECTRUM ||
+  return _state == STATE_JAMMER_RUNNING || _state == STATE_JAMALL_RUNNING ||
+         _state == STATE_SPECTRUM ||
          _state == STATE_MJ_SCAN || _state == STATE_RF_TEST_TX;
 }
 
@@ -156,7 +157,7 @@ bool NRF24Screen::inhibitPowerOff() {
 void NRF24Screen::_showMenu() {
   _state = STATE_MENU;
   snprintf(_titleBuf, sizeof(_titleBuf), "NRF24L01");
-  setItems(_mainItems, 4, _menuReturnIndex);
+  setItems(_mainItems, 5, _menuReturnIndex);
 }
 
 bool NRF24Screen::_radioBegin() {
@@ -208,10 +209,14 @@ void NRF24Screen::onItemSelected(uint8_t index) {
       _startJammer();
 
     } else if (index == 2) {
+      // ── Jam All: every module sweeps the band at once ─────
+      _startJamAll();
+
+    } else if (index == 3) {
       // ── MouseJack ─────────────────────────────────────────
       _setupMjScan();
 
-    } else if (index == 3) {
+    } else if (index == 4) {
       // ── RF Test TX ────────────────────────────────────────
       _startRfTest();
     }
@@ -359,6 +364,23 @@ void NRF24Screen::onUpdate() {
     return;
   }
 
+  if (_state == STATE_JAMALL_RUNNING) {
+    if (Uni.Nav->wasPressed()) {
+      auto dir = Uni.Nav->readDirection();
+      if (dir == INavigation::DIR_BACK) {
+        NrfJammer::stop();
+        _showMenu();
+        return;
+      }
+    }
+    // Refresh the hops-rate line once a second.
+    if (millis() - _lastRender >= 1000) {
+      _lastRender = millis();
+      render();
+    }
+    return;
+  }
+
   if (_state == STATE_MJ_SCAN) {
     if (Uni.Nav->wasPressed()) {
       auto dir = Uni.Nav->readDirection();
@@ -398,6 +420,7 @@ void NRF24Screen::onUpdate() {
 void NRF24Screen::onRender() {
   if (_state == STATE_SPECTRUM)       { _renderSpectrum();     return; }
   if (_state == STATE_JAMMER_RUNNING) { _renderJammerStatus(); return; }
+  if (_state == STATE_JAMALL_RUNNING) { _renderJamAllStatus(); return; }
   if (_state == STATE_MJ_SCAN)        { _renderMjScan();       return; }
   if (_state == STATE_RF_TEST_TX)     { _renderRfTest();       return; }
   ListScreen::onRender();
@@ -420,6 +443,10 @@ void NRF24Screen::onBack() {
     case STATE_JAMMER_RUNNING:
       _nrf.radio()->stopConstCarrier();
       _radioEnd();
+      _showMenu();
+      break;
+    case STATE_JAMALL_RUNNING:
+      NrfJammer::stop();
       _showMenu();
       break;
     case STATE_MJ_SCAN:
@@ -633,6 +660,88 @@ void NRF24Screen::_renderJammerStatus() {
     lcd.drawString("[Lt/Rt] Mode  [Press] Hop", bx + bw / 2, footerY + 7, 1);
     _chromeDrawn = true;
   }
+}
+
+// ── Jam All (multi-module sweep) ─────────────────────────────────────────────
+
+void NRF24Screen::_startJamAll() {
+#ifdef NRF24_CE_PINS
+  // Board wiring declares the full module bank (solder map: 4 × nRF24L01+).
+  static const uint8_t ce[]  = NRF24_CE_PINS;
+  static const uint8_t csn[] = NRF24_CSN_PINS;
+  const int n = NRF24_COUNT;
+#else
+  // Other boards: jam with whatever single module is configured.
+  const uint8_t ce[]  = { (uint8_t)_cePin };
+  const uint8_t csn[] = { (uint8_t)_csnPin };
+  const int     n     = 1;
+#endif
+
+  const int online = NrfJammer::start(Uni.Spi, ce, csn, n);
+  if (online == 0) {
+    ShowStatusAction::show("No NRF24 detected");
+    render();
+    return;
+  }
+
+  _chromeDrawn = false;
+  _lastRender  = millis();
+  _state = STATE_JAMALL_RUNNING;
+  snprintf(_titleBuf, sizeof(_titleBuf), "NRF Jam All");
+  if (Achievement.inc("nrf24_jam_all") == 1) Achievement.unlock("nrf24_jam_all");
+  render();
+}
+
+void NRF24Screen::_renderJamAllStatus() {
+  auto& lcd = Uni.Lcd;
+  int bx = bodyX(), by = bodyY(), bw = bodyW(), bh = bodyH();
+  static constexpr int FOOTER_H = 12;
+  const int contentH = bh - FOOTER_H - 1;
+
+  if (!_chromeDrawn) {
+    lcd.fillRect(bx, by, bw, bh, TFT_BLACK);
+    lcd.setTextSize(1);
+    lcd.setTextDatum(TL_DATUM);
+
+    lcd.setTextColor(TFT_RED, TFT_BLACK);
+    lcd.drawString("JAMMING ALL BANDS", bx + 4, by + 4, 1);
+
+    char line[28];
+    lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
+    snprintf(line, sizeof(line), "RF: %d module%s online",
+             NrfJammer::online(), NrfJammer::online() > 1 ? "s" : "");
+    lcd.drawString(line, bx + 4, by + 4 + contentH / 5, 1);
+
+    lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    lcd.drawString("2.400 - 2.527 GHz sweep", bx + 4, by + 4 + contentH / 5 * 2, 1);
+    lcd.drawString("WiFi / BT / Zigbee / RC", bx + 4, by + 4 + contentH / 5 * 3, 1);
+
+    const int footerY = by + bh - FOOTER_H;
+    lcd.drawFastHLine(bx, footerY - 1, bw, TFT_DARKGREY);
+    lcd.setTextDatum(MC_DATUM);
+    lcd.drawString("[BACK] Stop", bx + bw / 2, footerY + 7, 1);
+    _chromeDrawn = true;
+  }
+
+  // Dynamic line — hop rate, redrawn each second (onUpdate re-renders).
+  static uint32_t sLastHops = 0, sLastMs = 0;
+  uint32_t now = millis();
+  uint32_t rate = 0;
+  if (sLastMs) {
+    uint32_t dt = now - sLastMs;
+    if (dt) rate = (NrfJammer::hops() - sLastHops) * 1000UL / dt;
+  }
+  sLastHops = NrfJammer::hops();
+  sLastMs   = now;
+
+  lcd.fillRect(bx + 4, by + 4 + contentH / 5 * 4, bw - 8, 10, TFT_BLACK);
+  lcd.setTextSize(1);
+  lcd.setTextDatum(TL_DATUM);
+  lcd.setTextColor(TFT_CYAN, TFT_BLACK);
+  char line[28];
+  snprintf(line, sizeof(line), "Hops: %lu/s  ch %d",
+           (unsigned long)rate, (int)(NrfJammer::hops() % 126));
+  lcd.drawString(line, bx + 4, by + 4 + contentH / 5 * 4, 1);
 }
 
 // ══════════════════════════════════════════════════════════════

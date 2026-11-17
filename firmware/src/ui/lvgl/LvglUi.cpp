@@ -7,6 +7,7 @@
 #ifdef USE_LVGL_SHELL
 
 #include <Arduino.h>
+#include "esp_heap_caps.h"
 #include "core/ConfigManager.h"
 #include "core/Device.h"
 
@@ -50,9 +51,13 @@ void ensure() {
 
   const int W = Uni.Lcd.width();
   const int H = Uni.Lcd.height();
-  const int bufH = 40;
+  // Full-screen buffer in PSRAM: one flush pass per frame instead of eight
+  // 40-row slices — the difference between ~13 fps and ~30+ fps on any
+  // full-screen redraw (shell restores, game overlays, list pages).
+  const int bufH = H;
   static lv_disp_draw_buf_t drawBuf;
-  static lv_color_t* bufPx = (lv_color_t*)malloc(W * bufH * sizeof(lv_color_t));
+  static lv_color_t* bufPx = (lv_color_t*)heap_caps_malloc(W * bufH * sizeof(lv_color_t),
+                                                           MALLOC_CAP_SPIRAM);
   lv_disp_draw_buf_init(&drawBuf, bufPx, nullptr, W * bufH);
 
   static lv_disp_drv_t dispDrv;

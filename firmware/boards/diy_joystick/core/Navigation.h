@@ -18,10 +18,14 @@
 #pragma once
 
 #include "core/INavigation.h"
+#include "core/Device.h"
 
 class NavigationImpl : public INavigation
 {
 public:
+  // Track orientation for the touch-zone flip (base member is private).
+  void setRightHand(bool v) override { INavigation::setRightHand(v); _touchFlip = v; }
+
   void begin() override {
     pinMode(JOY_SW_PIN, INPUT_PULLUP);
 
@@ -46,6 +50,12 @@ public:
     _centerX = sumX / CAL_SAMPLES;
     _centerY = sumY / CAL_SAMPLES;
 #endif
+
+    // XPT2046 touch (TOUCH_CS=41, shared display SPI) — same calData shape
+    // as the CYD W328R backend: {xMin, xMax, yMin, yMax, rotation}.
+    static uint16_t calData[5] = { TOUCH_CAL_X_MIN, TOUCH_CAL_X_MAX,
+                                   TOUCH_CAL_Y_MIN, TOUCH_CAL_Y_MAX, 1 };
+    Uni.Lcd.setTouch(calData);
   }
 
   void update() override {
@@ -54,6 +64,30 @@ public:
     return;
 #else
     uint32_t now = millis();
+
+    // ── Touch (XPT2046) — polled every 20 ms, overrides the stick while a
+    // finger is down. Zones mirror the CYD layout: left quarter = BACK,
+    // right 3/4 split in thirds = UP / PRESS / DOWN.
+    if (now - _touchPoll >= 20 && false) {   // TEMP OFF: XPT2046 dead on this board — poll disabled until the module is replaced
+      _touchPoll = now;
+      uint16_t tx, ty;
+      if (Uni.Lcd.getTouch(&tx, &ty)) {
+        constexpr int16_t SW_ = TFT_HEIGHT, SH_ = TFT_WIDTH;   // landscape
+        if (_touchFlip) { tx = SW_ - 1 - tx; ty = SH_ - 1 - ty; }
+        if (tx >= SW_) tx = SW_ - 1;
+        if (ty >= SH_) ty = SH_ - 1;
+        Direction d;
+        if (tx < SW_ / 4)                      d = DIR_BACK;
+        else if (ty < SH_ / 3)                 d = DIR_UP;
+        else if (ty < (SH_ / 3) * 2)           d = DIR_PRESS;
+        else                                   d = DIR_DOWN;
+        _touchCnt = 0;
+        updateState(d);
+        return;
+      }
+      if (++_touchCnt < 3) { updateState(DIR_NONE); return; }   // debounce release
+      _touchCnt = 3;
+    }
 
     // ── SW button: short press = PRESS, hold = BACK ─────────────────────
     bool swDown = (digitalRead(JOY_SW_PIN) == LOW);
@@ -102,4 +136,8 @@ private:
   uint32_t _swDownTime = 0;
   bool     _swWasDown  = false;
   bool     _swLong     = false;
+
+  uint32_t _touchPoll = 0;
+  uint8_t  _touchCnt  = 3;
+  bool     _touchFlip = false;
 };

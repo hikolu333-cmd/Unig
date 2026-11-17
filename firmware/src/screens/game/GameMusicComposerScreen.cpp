@@ -554,6 +554,7 @@ void GameMusicComposerScreen::_renderEditor() {
 
 #ifdef USE_LVGL_SHELL
   _scene.flush();
+  LvglUi::pump();   // render the invalidated canvas (no pump elsewhere while this screen is current)
 #else
   sp.pushSprite(x, y);
   sp.deleteSprite();
@@ -622,6 +623,7 @@ void GameMusicComposerScreen::_renderPlayback() {
 
 #ifdef USE_LVGL_SHELL
   _scene.flush();
+  LvglUi::pump();   // render the invalidated canvas (no pump elsewhere while this screen is current)
 #else
   sp.pushSprite(x, y);
   sp.deleteSprite();

@@ -28,6 +28,11 @@
 #define APP_CONFIG_BRIGHTNESS_DEFAULT           "70"
 #define APP_CONFIG_VOLUME                       "volume"
 #define APP_CONFIG_VOLUME_DEFAULT               "75"
+
+// Quick Off: window of POWER codes found by the Find Code sweep — replayed
+// with one press, no scanning. Format "NEC:4:c2:32;SAMSUNG:7:2:32".
+#define APP_CONFIG_IR_QUICK_OFF                 "ir_quick_off"
+#define APP_CONFIG_IR_QUICK_OFF_DEFAULT         ""
 #define APP_CONFIG_NAV_SOUND                    "nav_sound"
 #define APP_CONFIG_NAV_SOUND_DEFAULT            "1"
 // On-screen text keyboard layout. "full" is the 6x5 per-letter grid; "classic"

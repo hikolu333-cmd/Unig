@@ -616,6 +616,10 @@ void SubGHzScreen::_runBruteForce() {
   _bruteBits  = kBruteProtos[_bruteSel].bits;
   _bruteTotal = (_bruteBits >= 32) ? 0xFFFFFFFFu : (1u << _bruteBits);
   _bruteKey   = 0;
+  _bruteZone  = 0;
+  _brutePos   = 0;
+  _bruteTried = 0;
+  _bruteT0    = millis();
 
   if (!_rf.begin(Uni.Spi, _csPin, _gdo0Pin)) {
     ShowStatusAction::show("CC1101 not detected");
@@ -636,6 +640,80 @@ void SubGHzScreen::_runBruteForce() {
   _bruteRenderMs = 0;
   snprintf(_titleBuf, sizeof(_titleBuf), "Brute Force");
   render();
+}
+
+// ── Hot-zone generator ───────────────────────────────────────────────────────
+// Real gate/door installations are NOT uniform over the code space:
+//   · DIP-switch units ship with all-off/all-on addresses (0x000 / 0xFFF)
+//   · factory-programmed units burn low sequential serials
+//   · service remotes live at well-known "famous" patterns (0xAAA, 0x555…)
+// Sweeping those zones first turns "days of sequential noise" into seconds
+// for the majority of receivers, with the full space still covered after.
+bool SubGHzScreen::_bruteNext(uint32_t& code) {
+  if (!_bruteHot) {
+    // Plain sequential fallback (old behaviour).
+    if (_bruteKey >= _bruteTotal) return false;
+    code = _bruteKey++;
+    return true;
+  }
+
+  // Zone sizes clamp for small spaces (e.g. 9-bit: 0xFF high zone ~ full).
+  const uint32_t kLowN  = (_bruteTotal > 0x200)    ? 0x100 : _bruteTotal;
+  const uint32_t kTopN  = (_bruteTotal > 0x400)    ? 0x100 : 0;
+  static const uint32_t kHot9[]  = { 0x1F5, 0x155, 0x0A5, 0x15A, 0x1AA, 0x0F5, 0x0AA, 0x0FF, 0x100 };
+  static const uint32_t kHot10[] = { 0x2A5, 0x155, 0x2AA, 0x0AA, 0x3FF, 0x100, 0x3A5, 0x2A0, 0x1A5, 0x3AA };
+  static const uint32_t kHot12[] = { 0xAAA, 0x555, 0xF5A, 0x5A5, 0xA5A, 0x0F0, 0x0AA, 0x155, 0xF0F, 0x5F5, 0xAF5, 0xFA5, 0x0A5, 0xA55, 0x55A, 0xF55 };
+  static const uint32_t kHot24[] = { 0xAAAAAA, 0x555555, 0x0F0F0F, 0x0AAAAA, 0xA55AA5, 0x5AA55A, 0x0A0A0A, 0x155155, 0x55AA55, 0xF0F0F0, 0x0AAAA0, 0x0F0A5A, 0x1BCD1B, 0x0AAA55, 0x05A5A5, 0x0F55AA };
+  const uint32_t* hot = kHot12;
+  uint32_t hotN = 16;
+  if (_bruteBits <= 9)       { hot = kHot9;  hotN = 9;  }
+  else if (_bruteBits == 10) { hot = kHot10; hotN = 10; }
+  else if (_bruteBits == 12) { hot = kHot12; hotN = 16; }
+  else                       { hot = kHot24; hotN = 16; }
+
+  switch (_bruteZone) {
+    case 0:  // low serials + all-off DIP
+      if (_brutePos < kLowN) { code = _brutePos++; _bruteKey = code; return true; }
+      _bruteZone = 1; _brutePos = 0;
+      // fall through
+    case 1:  // famous service/factory patterns
+      if (_brutePos < hotN) {
+        code = hot[_brutePos++] & (_bruteTotal - 1);
+        _bruteKey = code;
+        return true;
+      }
+      _bruteZone = 2; _brutePos = 0;
+      // fall through
+    case 2:  // all-on DIP / top serials, descending
+      if (_brutePos < kTopN) {
+        code = _bruteTotal - 1 - _brutePos++;
+        _bruteKey = code;
+        return true;
+      }
+      _bruteZone = 3; _brutePos = kLowN + 1;   // rest of the space, ascending
+      // fall through
+    case 3:
+      if (_brutePos < _bruteTotal - kTopN) {
+        code = _brutePos++;
+        _bruteKey = code;
+        return true;
+      }
+      _bruteZone = 4;
+      return false;
+    default:
+      return false;
+  }
+}
+
+const char* SubGHzScreen::_bruteZoneName() const {
+  if (!_bruteHot) return "Sequential";
+  switch (_bruteZone) {
+    case 0:  return "Zone: low/dip";
+    case 1:  return "Zone: famous";
+    case 2:  return "Zone: top";
+    case 3:  return "Zone: rest";
+    default: return "Done";
+  }
 }
 
 // Encode one code and transmit it — RcSwitch registry when rcProto >= 1, else
@@ -672,19 +750,18 @@ bool SubGHzScreen::_onUpdateBruteForce() {
     }
   }
 
-  // Whole space swept → done.
-  if (_bruteKey >= _bruteTotal) {
-    _rf.endBruteTx();
-    _rf.end();
-    ShowStatusAction::show("Completed", 1500);
-    _showMenu();
-    return true;
-  }
-
-  // Transmit a small batch this tick (each send blocks on the RMT flush).
-  for (uint8_t i = 0; i < kBruteBatch && _bruteKey < _bruteTotal; i++) {
-    _bruteTransmit(_bruteKey);
-    _bruteKey++;
+  // Transmit a batch this tick (each send blocks on the RMT flush).
+  uint32_t code;
+  for (uint8_t i = 0; i < kBruteBatch; i++) {
+    if (!_bruteNext(code)) {
+      _rf.endBruteTx();
+      _rf.end();
+      ShowStatusAction::show("Completed", 1500);
+      _showMenu();
+      return true;
+    }
+    _bruteTransmit(code);
+    _bruteTried++;
   }
 
   if (millis() - _bruteRenderMs >= 80) { _bruteRenderMs = millis(); render(); }
@@ -708,7 +785,7 @@ bool SubGHzScreen::_onRenderBruteForce() {
     _bruteChrome = true;
   }
 
-  // Dynamic region: current code + counter + progress bar.
+  // Dynamic region: current code + counter + rate + progress bar.
   const int dy = bodyY() + 28;
   lcd.fillRect(bodyX(), dy, bodyW(), 34, TFT_BLACK);
   lcd.setTextDatum(TL_DATUM);
@@ -717,7 +794,10 @@ bool SubGHzScreen::_onRenderBruteForce() {
   snprintf(line, sizeof(line), "Code: 0x%lX", (unsigned long)_bruteKey);
   lcd.drawString(line, bodyX() + 4, dy);
   lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  snprintf(line, sizeof(line), "%lu / %lu", (unsigned long)_bruteKey, (unsigned long)_bruteTotal);
+  uint32_t dt = millis() - _bruteT0;
+  uint32_t rate = dt ? (_bruteTried * 1000UL / dt) : 0;
+  snprintf(line, sizeof(line), "%lu sent  %lu/s  %s",
+           (unsigned long)_bruteTried, (unsigned long)rate, _bruteZoneName());
   lcd.drawString(line, bodyX() + 4, dy + 12);
 
   const int barY = dy + 26, barW = bodyW() - 8, barH = 7;

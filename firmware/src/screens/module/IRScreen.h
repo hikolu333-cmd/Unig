@@ -31,6 +31,8 @@ private:
     STATE_SEND_BROWSE,
     STATE_SEND_LIST,
     STATE_TVBGONE,
+    STATE_POWERBLAST,
+    STATE_FIND_CODE,
   } _state = STATE_MENU;
 
   IRUtil _ir;
@@ -40,10 +42,14 @@ private:
   uint8_t _menuReturnIndex = 0;
 
   // Menu — IR TX/RX pins are configured under Settings > Pin Setting.
-  ListItem _menuItems[3] = {
+  ListItem _menuItems[7] = {
+    {"Quick Off"},
     {"Receive"},
     {"Send"},
+    {"Find Code"},
     {"TV-B-Gone"},
+    {"Power Blast"},
+    {"Instant Off"},
   };
 
   void _showMenu();
@@ -85,6 +91,15 @@ private:
   // TV-B-Gone
   static void _tvbProgressCb(uint8_t current, uint8_t total);
   static bool _tvbCancelCb();
+  static void _pbProgressCb(int current, int total);
+  static bool _pbCancelCb();
+
+  // Find Code / Quick Off
+  void _quickOff();
+  void _findCode();
+  String _quickSpecBuild(int from, int to);
+  static void _fcProgressCb(int current, int total);
+  static bool _fcCancelCb();
   static IRScreen* _activeInstance;
   bool _tvbCancelled = false;
 

@@ -386,6 +386,7 @@ void ClaudeBuddyScreen::onRender() {
 
 #ifdef USE_LVGL_SHELL
   _scene.flush();
+  LvglUi::pump();   // render the invalidated canvas (no pump elsewhere while this screen is current)
 #else
   sp.pushSprite(bodyX(), bodyY());
   sp.deleteSprite();
