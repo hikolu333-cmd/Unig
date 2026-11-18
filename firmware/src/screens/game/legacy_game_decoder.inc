@@ -1,5 +1,5 @@
-static constexpr char kCharDB[16] = {
-  '0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'
+static constexpr char kCharDB[10] = {
+  '0','1','2','3','4','5','6','7','8','9'
 };
 
 static const uint16_t kColors[4] = {
@@ -18,8 +18,8 @@ void GameDecoderScreen::onUpdate()
       char c = Uni.Keyboard->getKey();
       if (c == '\b' || c == 127)                                            { _backChar();   break; }
       else if (c == '\n' || c == '\r')                                      { _submitGuess(); break; }
-      else if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'))
-        _handleKeyInput((c >= 'a') ? c - ('a' - 'A') : c);
+      else if (c >= '0' && c <= '9')
+        _handleKeyInput(c);
     }
   }
 #endif

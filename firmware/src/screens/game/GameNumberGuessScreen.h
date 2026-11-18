@@ -2,19 +2,22 @@
 
 #include "ui/templates/BaseScreen.h"
 
-#ifdef USE_LVGL_SHELL
+#if defined(USE_LVGL_SHELL) && !defined(GAME_TFT_CANVAS)
 // ─────────────────────────────────────────────────────────────────────────────
-// Number Guess — native LVGL build. Big value label, hint line (higher/lower),
-// UP/DOWN = ±1, LEFT/RIGHT = ±10, PRESS = submit, unlimited/limited by stage.
+// Number Guess — native LVGL build. UP/DOWN = ±1, LEFT/RIGHT = ±10 (GameNav
+// held-repeat makes big ranges fast), PRESS = submit. The known range
+// [lo, hi] narrows visually on a bar after each guess. Limited tries on the
+// harder difficulties (0 = unlimited).
 // ─────────────────────────────────────────────────────────────────────────────
 #include <lvgl.h>
 #include "ui/lvgl/LvglUi.h"
+#include "ui/lvgl/GameNav.h"
 
 class GameNumberGuessScreen : public BaseScreen
 {
 public:
   const char* title()     override { return "Number Guess"; }
-  bool inhibitPowerSave() override { return true; }
+  bool inhibitPowerSave() override { return _state == ST_PLAY; }
   bool inhibitPowerOff()  override { return true; }
 
   void onInit()   override;
@@ -24,11 +27,10 @@ public:
 private:
   enum State { ST_MENU, ST_PLAY, ST_RESULT, ST_SCORES };
 
-  static constexpr uint8_t kDiffN = 4;
+  static constexpr int kDiffN = 4;
   static const char* const kDiffNames[kDiffN];
-  static constexpr int kMaxVal[kDiffN]  = { 99, 999, 9999, 9999 };
-  static constexpr int kTrials[kDiffN]  = { 0, 8, 10, 12 };   // 0 = unlimited
-  static constexpr uint8_t kMenuN = 4;
+  static constexpr int kMaxVal[kDiffN] = { 99, 999, 9999, 9999 };
+  static constexpr int kTrials[kDiffN] = { 0, 8, 10, 12 };   // 0 = unlimited
 
   State   _state = ST_MENU;
   int8_t  _menuIdx = 0;
@@ -36,25 +38,30 @@ private:
   int     _target = 0;
   int     _guess  = 0;
   int     _tries  = 0;
-  bool    _lastHigh = false;   // direction of the last hint
+  int     _lo = 0, _hi = 0;       // knowledge window from hints
   int     _best[kDiffN] = {};
 
+  GameNav _nav;
+
   lv_obj_t* _arena = nullptr;
-  lv_obj_t* _valueLbl = nullptr;
-  lv_obj_t* _hintLbl  = nullptr;
+  lv_obj_t* _valueBox = nullptr;   // big number cell
+  lv_obj_t* _hint = nullptr;
   lv_obj_t* _triesLbl = nullptr;
+  lv_obj_t* _rangeBar = nullptr;   // known-interval segment
+  lv_obj_t* _rangeTrack = nullptr;
   lv_obj_t* _overlay = nullptr;
-  lv_obj_t* _ovRows[kMenuN] = {};
-  uint8_t  _ovN = 0;
+  lv_obj_t* _ovRows[4] = {};
 
   void _build();
   void _showMenu();
-  void _hideOverlay();
-  void _showResult(bool win);
   void _showScores();
+  void _showResult(bool win);
+  void _hideOverlay();
   void _startPlay();
   void _submit();
   void _paintValue();
+  void _paintRange();
+  void _menuFocus();
 };
 
 #else  // legacy — original repo implementation

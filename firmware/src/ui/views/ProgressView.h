@@ -73,7 +73,8 @@ private:
   }
 
   void _progress(const char* message, uint8_t percent) {
-    if (!_panel) _init();
+    // The panel may have been deleted with its parent screen between calls.
+    if (!_panel || !lv_obj_is_valid(_panel)) { _panel = nullptr; _init(); }
 
     if (message) lv_label_set_text(_label, message);
     lv_bar_set_value(_bar, percent, LV_ANIM_OFF);
@@ -82,6 +83,8 @@ private:
 
   void _finish() {
     if (!_panel) return;
+    // Screen changed mid-operation: the panel went with its parent screen.
+    if (!lv_obj_is_valid(_panel)) { _panel = nullptr; _label = nullptr; _bar = nullptr; return; }
     // Sweep the remaining fill up to 100% in a few short steps so the bar is
     // always seen completing, even when the caller immediately redraws the
     // body (menu, status overlay) right after the operation finishes.
@@ -98,11 +101,22 @@ private:
 
   void _teardown() {
     if (_panel) {
-      lv_obj_del(_panel);
-      _panel = nullptr;
-      _label = nullptr;
-      _bar   = nullptr;
-      LvglUi::repaintScreen();
+      // This singleton outlives screens. A screen change deletes viewParent,
+      // which cascades onto _panel — the pointers go dangling, and the next
+      // init() would lv_obj_del() freed memory (LoadProhibited on SubGHz).
+      // Validate against the live tree before touching it; null the pointers
+      // unconditionally so a deleted panel is never reused.
+      if (lv_obj_is_valid(_panel)) {
+        lv_obj_del(_panel);
+        _panel = nullptr;
+        _label = nullptr;
+        _bar   = nullptr;
+        LvglUi::repaintScreen();
+      } else {
+        _panel = nullptr;
+        _label = nullptr;
+        _bar   = nullptr;
+      }
     }
   }
 

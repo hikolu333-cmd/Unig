@@ -90,7 +90,9 @@ private:
 
   // ─── Helpers ─────────────────────────────────────────────────────
   void _showMenu();
+  ExtSpiClass* _bus() const;
   bool _radioBegin();
+  bool _radioBeginRetry();
   void _radioEnd();
 
   // Spectrum

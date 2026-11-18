@@ -1,23 +1,17 @@
 //
-// Flappy Bird — native LVGL build (USE_LVGL_SHELL). Physics identical to the
-// legacy build; rendering is pure widgets: bird = rounded lv_obj, pipes = two
-// rects per slot, score = label, menus = overlay panels. Only moved regions
-// redraw. The legacy TFT path stays below untouched for non-LVGL boards.
+// Flappy — native LVGL build (USE_LVGL_SHELL). The bird is a small group of
+// basic objects (body / wing / eye / beak), pipes are shaft+cap pairs in
+// bright green, clouds drift behind everything. Positions sync from physics
+// state every onUpdate frame.
 //
 
 #include "GameFlappyScreen.h"
 #include "core/Device.h"
+#include "core/ConfigManager.h"
 #include "core/ScreenManager.h"
 #include "core/AchievementManager.h"
-#include "core/ConfigManager.h"
 
-#ifdef USE_LVGL_SHELL
-
-#include <lvgl.h>
-
-namespace {
-lv_color_t col16(uint16_t c) { return LvglUi::c565(c); }
-}
+#if defined(USE_LVGL_SHELL) && !defined(GAME_TFT_CANVAS)
 
 void GameFlappyScreen::onInit()
 {
@@ -29,243 +23,231 @@ void GameFlappyScreen::onInit()
 void GameFlappyScreen::_buildArena()
 {
   lv_obj_t* parent = LvglUi::viewParent();
-  _arenaW = lv_obj_get_width(parent);
-  _arenaH = lv_obj_get_height(parent);
-  if (_arenaW <= 0) _arenaW = 320;
-  if (_arenaH <= 0) _arenaH = 240;
+  _arena = gamekit::arena(parent, 0x0f1626);          // night sky (dark theme)
+  _arenaW = lv_obj_get_width(_arena);
+  _arenaH = lv_obj_get_height(_arena);
+  if (_arenaW < 100) _arenaW = 320;
+  if (_arenaH < 100) _arenaH = 206;
 
-  _arena = lv_obj_create(parent);
-  lv_obj_set_pos(_arena, 0, 0);
-  lv_obj_set_size(_arena, _arenaW, _arenaH);
-  lv_obj_set_style_bg_color(_arena, lv_color_hex(0x0c1420), 0);
-  lv_obj_set_style_bg_opa(_arena, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(_arena, 0, 0);
-  lv_obj_set_style_pad_all(_arena, 0, 0);
-  lv_obj_set_style_radius(_arena, 0, 0);
-  lv_obj_clear_flag(_arena, LV_OBJ_FLAG_SCROLLABLE);
+  // clouds (below everything else — created first)
+  for (int i = 0; i < kMaxClouds; i++) {
+    lv_obj_t* cl = lv_obj_create(_arena);
+    lv_obj_set_pos(cl, 40 + i * 110, 18 + (i % 2) * 26);
+    lv_obj_set_size(cl, 40 + (i % 2) * 10, 12);
+    lv_obj_set_style_bg_color(cl, lv_color_hex(0x24304c), 0);
+    lv_obj_set_style_bg_opa(cl, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(cl, 0, 0);
+    lv_obj_set_style_radius(cl, LV_RADIUS_CIRCLE, 0);
+    _clouds[i] = cl;
+  }
 
-  // pipes (hidden until spawned)
+  // pipes: shaft + cap pairs
   for (int i = 0; i < kMaxPipes; i++) {
-    _pipeT[i] = lv_obj_create(_arena);
-    lv_obj_set_style_bg_color(_pipeT[i], lv_color_hex(0x2e8b57), 0);
-    lv_obj_set_style_bg_opa(_pipeT[i], LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(_pipeT[i], 0, 0);
-    lv_obj_set_style_radius(_pipeT[i], 0, 0);
-    lv_obj_add_flag(_pipeT[i], LV_OBJ_FLAG_HIDDEN);
+    auto pipePart = [&](lv_obj_t** shaft, lv_obj_t** cap) {
+      *shaft = lv_obj_create(_arena);
+      lv_obj_set_style_bg_color(*shaft, lv_color_hex(0x43a047), 0);
+      lv_obj_set_style_bg_opa(*shaft, LV_OPA_COVER, 0);
+      lv_obj_set_style_border_color(*shaft, lv_color_hex(0x1b5e20), 0);
+      lv_obj_set_style_border_width(*shaft, 2, 0);
+      lv_obj_set_style_radius(*shaft, 0, 0);
+      lv_obj_add_flag(*shaft, LV_OBJ_FLAG_HIDDEN);
 
-    _pipeB[i] = lv_obj_create(_arena);
-    lv_obj_set_style_bg_color(_pipeB[i], lv_color_hex(0x2e8b57), 0);
-    lv_obj_set_style_bg_opa(_pipeB[i], LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(_pipeB[i], 0, 0);
-    lv_obj_set_style_radius(_pipeB[i], 0, 0);
-    lv_obj_add_flag(_pipeB[i], LV_OBJ_FLAG_HIDDEN);
+      *cap = lv_obj_create(_arena);
+      lv_obj_set_size(*cap, kCapW, kCapH);
+      lv_obj_set_style_bg_color(*cap, lv_color_hex(0x4caf50), 0);
+      lv_obj_set_style_bg_opa(*cap, LV_OPA_COVER, 0);
+      lv_obj_set_style_border_color(*cap, lv_color_hex(0x1b5e20), 0);
+      lv_obj_set_style_border_width(*cap, 2, 0);
+      lv_obj_set_style_radius(*cap, 3, 0);
+      lv_obj_add_flag(*cap, LV_OBJ_FLAG_HIDDEN);
+    };
+    pipePart(&_pipeT[i], &_pipeTC[i]);
+    pipePart(&_pipeB[i], &_pipeBC[i]);
   }
 
   // ground strip
   _ground = lv_obj_create(_arena);
   lv_obj_set_pos(_ground, 0, _arenaH - kGroundH);
   lv_obj_set_size(_ground, _arenaW, kGroundH);
-  lv_obj_set_style_bg_color(_ground, lv_color_hex(0x8b5a2b), 0);
+  lv_obj_set_style_bg_color(_ground, lv_color_hex(0x3d3226), 0);
   lv_obj_set_style_bg_opa(_ground, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(_ground, 0, 0);
+  lv_obj_set_style_border_color(_ground, lv_color_hex(0x8b6f47), 0);
+  lv_obj_set_style_border_width(_ground, 2, 0);
+  lv_obj_set_style_border_side(_ground, LV_BORDER_SIDE_TOP, 0);
   lv_obj_set_style_radius(_ground, 0, 0);
 
-  // bird
+  // bird group: transparent carrier + parts
   _bird = lv_obj_create(_arena);
-  lv_obj_set_pos(_bird, kBirdX, _arenaH / 2);
-  lv_obj_set_size(_bird, kBirdW, kBirdH);
-  lv_obj_set_style_bg_color(_bird, lv_color_hex(0xffd54f), 0);
-  lv_obj_set_style_bg_opa(_bird, LV_OPA_COVER, 0);
+  lv_obj_set_pos(_bird, kBirdX, (int)_birdY);
+  lv_obj_set_size(_bird, kBirdW + 6, kBirdH);
+  lv_obj_set_style_bg_opa(_bird, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(_bird, 0, 0);
-  lv_obj_set_style_radius(_bird, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_pad_all(_bird, 0, 0);
+  lv_obj_clear_flag(_bird, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(_bird, LV_OBJ_FLAG_HIDDEN);
 
-  // score
-  _scoreL = lv_label_create(_arena);
-  lv_obj_set_style_text_font(_scoreL, &lv_font_montserrat_20, 0);
-  lv_obj_set_style_text_color(_scoreL, lv_color_white(), 0);
-  lv_obj_align(_scoreL, LV_ALIGN_TOP_MID, 0, 4);
-  lv_label_set_text(_scoreL, "");
+  lv_obj_t* body = lv_obj_create(_bird);
+  lv_obj_set_pos(body, 0, 0);
+  lv_obj_set_size(body, kBirdW, kBirdH);
+  lv_obj_set_style_bg_color(body, lv_color_hex(0xffd54f), 0);
+  lv_obj_set_style_bg_opa(body, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(body, lv_color_hex(0x8d6e00), 0);
+  lv_obj_set_style_border_width(body, 2, 0);
+  lv_obj_set_style_radius(body, LV_RADIUS_CIRCLE, 0);
 
-  lv_obj_move_to_index(_scoreL, -1);   // keep score above pipes
+  lv_obj_t* wing = lv_obj_create(_bird);
+  lv_obj_set_pos(wing, 2, 5);
+  lv_obj_set_size(wing, 9, 6);
+  lv_obj_set_style_bg_color(wing, lv_color_hex(0xffffff), 0);
+  lv_obj_set_style_bg_opa(wing, LV_OPA_90, 0);
+  lv_obj_set_style_border_width(wing, 0, 0);
+  lv_obj_set_style_radius(wing, 3, 0);
+
+  lv_obj_t* eye = lv_obj_create(_bird);
+  lv_obj_set_pos(eye, kBirdW - 6, 2);
+  lv_obj_set_size(eye, 4, 4);
+  lv_obj_set_style_bg_color(eye, lv_color_hex(0x1a1a1a), 0);
+  lv_obj_set_style_bg_opa(eye, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(eye, 0, 0);
+  lv_obj_set_style_radius(eye, LV_RADIUS_CIRCLE, 0);
+
+  lv_obj_t* beak = lv_obj_create(_bird);
+  lv_obj_set_pos(beak, kBirdW - 2, 5);
+  lv_obj_set_size(beak, 7, 4);
+  lv_obj_set_style_bg_color(beak, lv_color_hex(0xff8f00), 0);
+  lv_obj_set_style_bg_opa(beak, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(beak, 0, 0);
+  lv_obj_set_style_radius(beak, 2, 0);
+
+  // score — created last so it sits above the pipes
+  _scoreL = gamekit::label(_arena, &lv_font_montserrat_20, 0xffffff,
+                          LV_ALIGN_TOP_MID, 0, 4, "");
 }
 
 // ── overlays ────────────────────────────────────────────────────────────────
 
 void GameFlappyScreen::_hideOverlay()
 {
-  if (_overlay) {
-    lv_obj_add_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_del(_overlay);
-    _overlay = nullptr;
-    _ovRowCount = 0;
-  }
+  if (_overlay) { lv_obj_del(_overlay); _overlay = nullptr; }
+}
+
+void GameFlappyScreen::_menuRows(const char* const* rows, int n)
+{
+  for (int i = 0; i < n; i++)
+    _ovRows[i] = gamekit::label(_overlay, &lv_font_montserrat_16, 0xffffff,
+                                LV_ALIGN_TOP_MID, 0, 30 + i * 36, rows[i]);
 }
 
 void GameFlappyScreen::_showMenu()
 {
-  _state = STATE_MENU;
+  _state = ST_MENU;
   _hideOverlay();
-
-  _overlay = lv_obj_create(_arena);
-  lv_obj_center(_overlay);
-  lv_obj_set_size(_overlay, 200, 150);
-  lv_obj_set_style_bg_color(_overlay, lv_color_hex(0x101a26), 0);
-  lv_obj_set_style_bg_opa(_overlay, LV_OPA_90, 0);
-  lv_obj_set_style_border_color(_overlay, col16(Config.getThemeColor()), 0);
-  lv_obj_set_style_border_width(_overlay, 2, 0);
-  lv_obj_set_style_radius(_overlay, 8, 0);
-  lv_obj_set_style_pad_all(_overlay, 8, 0);
-  lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_SCROLLABLE);
-
-  const char* rows[] = { "Start", "Best Score", "Exit" };
   _menuIdx = 0;
-  _ovRowCount = 3;
-  for (int i = 0; i < 3; i++) {
-    _ovRows[i] = lv_label_create(_overlay);
-    lv_obj_set_style_text_font(_ovRows[i], &lv_font_montserrat_16, 0);
-    lv_label_set_text(_ovRows[i], rows[i]);
-    lv_obj_align(_ovRows[i], LV_ALIGN_TOP_MID, 0, i == 0 ? 10 : 10 + i * 34);
-  }
-  // title
-  lv_obj_t* t = lv_label_create(_overlay);
-  lv_obj_set_style_text_font(t, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(t, col16(Config.getThemeColor()), 0);
-  lv_label_set_text(t, "FLAPPY");
-  lv_obj_align(t, LV_ALIGN_TOP_MID, 0, -34);
-  lv_obj_set_parent(t, _overlay);
+
+  _overlay = gamekit::panel(_arena, 220, 170);
+  gamekit::label(_overlay, &lv_font_montserrat_20, 0xffd54f,
+                 LV_ALIGN_TOP_MID, 0, 8, "FLAPPY");
+  const char* rows[3] = { "Play", "Best Score", "Exit" };
+  _menuRows(rows, 3);
 
   lv_obj_add_flag(_bird, LV_OBJ_FLAG_HIDDEN);
+  for (int i = 0; i < kMaxPipes; i++) {
+    lv_obj_add_flag(_pipeT[i], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(_pipeTC[i], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(_pipeB[i], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(_pipeBC[i], LV_OBJ_FLAG_HIDDEN);
+  }
   lv_label_set_text(_scoreL, "");
+}
+
+void GameFlappyScreen::_showScores()
+{
+  _state = ST_SCORES;
+  _hideOverlay();
+
+  _overlay = gamekit::panel(_arena, 200, 120);
+  gamekit::label(_overlay, &lv_font_montserrat_16, 0xffd54f,
+                 LV_ALIGN_TOP_MID, 0, 10, "BEST SCORE");
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%d", _best);
+  gamekit::label(_overlay, &lv_font_montserrat_20, 0xffffff,
+                 LV_ALIGN_TOP_MID, 0, 42, buf);
+  gamekit::label(_overlay, &lv_font_montserrat_14, 0xcfd8e3,
+                 LV_ALIGN_TOP_MID, 0, 78, "any key = back");
 }
 
 void GameFlappyScreen::_showResult()
 {
-  _state = STATE_RESULT;
+  _state = ST_RESULT;
   if (_score > _best) {
     _best = _score;
     Config.set("flappy_best", String(_best));
   }
   _hideOverlay();
 
-  _overlay = lv_obj_create(_arena);
-  lv_obj_center(_overlay);
-  lv_obj_set_size(_overlay, 220, 150);
-  lv_obj_set_style_bg_color(_overlay, lv_color_hex(0x1a0d0d), 0);
-  lv_obj_set_style_bg_opa(_overlay, LV_OPA_90, 0);
-  lv_obj_set_style_border_color(_overlay, lv_color_hex(0xb0540f), 0);
-  lv_obj_set_style_border_width(_overlay, 2, 0);
-  lv_obj_set_style_radius(_overlay, 8, 0);
-  lv_obj_set_style_pad_all(_overlay, 10, 0);
-  lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_SCROLLABLE);
-
-  lv_obj_t* t = lv_label_create(_overlay);
-  lv_obj_set_style_text_font(t, &lv_font_montserrat_20, 0);
-  lv_obj_set_style_text_color(t, lv_color_hex(0xff7043), 0);
-  lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 6);
-  lv_label_set_text(t, "GAME OVER");
-
+  _overlay = gamekit::panel(_arena, 240, 150, 0x3a2a35);
+  lv_obj_set_style_border_color(_overlay, lv_color_hex(0xff7043), 0);
+  gamekit::label(_overlay, &lv_font_montserrat_20, 0xff7043,
+                 LV_ALIGN_TOP_MID, 0, 12, "GAME OVER");
   char buf[48];
-  snprintf(buf, sizeof(buf), "Score  %d    Best  %d", _score, _best);
-  lv_obj_t* s = lv_label_create(_overlay);
-  lv_obj_set_style_text_font(s, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(s, lv_color_white(), 0);
-  lv_obj_align(s, LV_ALIGN_TOP_MID, 0, 44);
-  lv_label_set_text(s, buf);
-
-  lv_obj_t* h = lv_label_create(_overlay);
-  lv_obj_set_style_text_font(h, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(h, lv_color_hex(0x9aa5b1), 0);
-  lv_obj_align(h, LV_ALIGN_TOP_MID, 0, 76);
-  lv_label_set_text(h, "PRESS = retry   BACK = menu");
-
-  _ovRowCount = 0;
-}
-
-void GameFlappyScreen::_showScores()
-{
-  _state = STATE_SCORES;
-  _hideOverlay();
-
-  _overlay = lv_obj_create(_arena);
-  lv_obj_center(_overlay);
-  lv_obj_set_size(_overlay, 180, 110);
-  lv_obj_set_style_bg_color(_overlay, lv_color_hex(0x101a26), 0);
-  lv_obj_set_style_bg_opa(_overlay, LV_OPA_90, 0);
-  lv_obj_set_style_border_width(_overlay, 2, 0);
-  lv_obj_set_style_radius(_overlay, 8, 0);
-  lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_SCROLLABLE);
-
-  lv_obj_t* t = lv_label_create(_overlay);
-  lv_obj_set_style_text_font(t, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(t, col16(Config.getThemeColor()), 0);
-  lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 8);
-  lv_label_set_text(t, "BEST SCORE");
-
-  char buf[24];
-  snprintf(buf, sizeof(buf), "%d", _best);
-  lv_obj_t* s = lv_label_create(_overlay);
-  lv_obj_set_style_text_font(s, &lv_font_montserrat_20, 0);
-  lv_obj_set_style_text_color(s, lv_color_white(), 0);
-  lv_obj_align(s, LV_ALIGN_TOP_MID, 0, 40);
-  lv_label_set_text(s, buf);
-
-  lv_obj_t* h = lv_label_create(_overlay);
-  lv_obj_set_style_text_font(h, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(h, lv_color_hex(0x9aa5b1), 0);
-  lv_obj_align(h, LV_ALIGN_TOP_MID, 0, 74);
-  lv_label_set_text(h, "any key = back");
-  _ovRowCount = 0;
+  snprintf(buf, sizeof(buf), "Score %d    Best %d", _score, _best);
+  gamekit::label(_overlay, &lv_font_montserrat_16, 0xffffff,
+                 LV_ALIGN_TOP_MID, 0, 50, buf);
+  gamekit::label(_overlay, &lv_font_montserrat_14, 0xcfd8e3,
+                 LV_ALIGN_TOP_MID, 0, 90, "PRESS = retry    BACK = menu");
 }
 
 // ── gameplay ─────────────────────────────────────────────────────────────────
 
 void GameFlappyScreen::_startPlay()
 {
-  _gapH        = _arenaH / 3;
-  _pipeSpeed   = 2;
+  int field = _arenaH - kGroundH;
+  _gapH         = max(56, field / 3);
+  _pipeSpeed    = 2;
   _pipeInterval = 1600;
-  _birdY       = _arenaH / 2.0f;
-  _velocity    = 0;
-  _score       = 0;
-  _pipeCount   = 0;
-  _pipeTimer   = 0;
-  _lastTickMs  = millis();
-  _state       = STATE_PLAY;
+  _birdY        = field / 2.0f;
+  _vel          = 0;
+  _score        = 0;
+  _pipeCount    = 0;
+  _pipeTimer    = 0;
+  _lastTickMs   = millis();
+  _state        = ST_PLAY;
 
   _hideOverlay();
   lv_obj_clear_flag(_bird, LV_OBJ_FLAG_HIDDEN);
   lv_label_set_text(_scoreL, "0");
-  _spawnPipe();
-  _syncWidgets();
 
   int n = Achievement.inc("flappy_first_play");
   if (n == 1) Achievement.unlock("flappy_first_play");
+
+  _sync();
 }
 
 void GameFlappyScreen::_flap()
 {
-  _velocity = kFlapForce;
+  _vel = kFlapForce;
+  if (Uni.Speaker) Uni.Speaker->playRandomTone(0, 30);
 }
 
 void GameFlappyScreen::_spawnPipe()
 {
   if (_pipeCount >= kMaxPipes) return;
-  int h     = _arenaH - kGroundH;
-  int minGY = _gapH / 2 + 6;
-  int maxGY = h - _gapH / 2 - 6;
-  _pipes[_pipeCount++] = { (int16_t)_arenaW, (uint8_t)(minGY + random(maxGY - minGY + 1)), false };
+  int field = _arenaH - kGroundH;
+  int minGY = _gapH / 2 + 8;
+  int maxGY = field - _gapH / 2 - 8;
+  _pipes[_pipeCount++] = { (int16_t)(_arenaW + kCapW), (int16_t)(minGY + random(maxGY - minGY + 1)), false };
 }
 
 bool GameFlappyScreen::_collision() const
 {
-  int h  = _arenaH - kGroundH;
+  int field = _arenaH - kGroundH;
   int by = (int)_birdY;
-  if (by <= 0 || by + kBirdH >= h) return true;
+  int bx = kBirdX + 3;                     // body x inside the group
+  if (by <= 0 || by + kBirdH >= field) return true;
 
-  for (uint8_t i = 0; i < _pipeCount; i++) {
+  for (int i = 0; i < _pipeCount; i++) {
     int px = _pipes[i].x;
-    if (kBirdX + kBirdW <= px || kBirdX >= px + kPipeW) continue;
+    if (bx + kBirdW <= px || bx >= px + kPipeW) continue;
     int gapTop = _pipes[i].gapY - _gapH / 2;
     int gapBot = _pipes[i].gapY + _gapH / 2;
     if (by < gapTop || by + kBirdH > gapBot) return true;
@@ -275,10 +257,10 @@ bool GameFlappyScreen::_collision() const
 
 void GameFlappyScreen::_tick()
 {
-  _velocity += kGravity;
-  _birdY    += _velocity;
+  _vel += kGravity;
+  _birdY += _vel;
 
-  for (uint8_t i = 0; i < _pipeCount; i++) {
+  for (int i = 0; i < _pipeCount; i++) {
     _pipes[i].x -= _pipeSpeed;
     if (!_pipes[i].scored && _pipes[i].x + kPipeW < kBirdX) {
       _pipes[i].scored = true;
@@ -294,15 +276,27 @@ void GameFlappyScreen::_tick()
     }
   }
 
-  while (_pipeCount > 0 && _pipes[0].x < -kPipeW) {
-    for (uint8_t i = 1; i < _pipeCount; i++) _pipes[i - 1] = _pipes[i];
+  while (_pipeCount > 0 && _pipes[0].x < -kCapW - 4) {
+    for (int i = 1; i < _pipeCount; i++) {
+      _pipes[i - 1] = _pipes[i];
+      _sizedT[i - 1] = false;   // slot now shows a different pipe — re-size once
+      _sizedB[i - 1] = false;
+    }
     _pipeCount--;
   }
 
-  _pipeTimer += 33;
+  _pipeTimer += kTickMs;
   if (_pipeTimer >= _pipeInterval) {
     _pipeTimer = 0;
     _spawnPipe();
+  }
+
+  // clouds drift
+  for (int i = 0; i < kMaxClouds; i++) {
+    lv_obj_t* cl = _clouds[i];
+    int cx = lv_obj_get_x(cl) - 1;
+    if (cx < -50) cx = _arenaW + 10;
+    lv_obj_set_x(cl, cx);
   }
 
   if (_collision()) {
@@ -311,84 +305,100 @@ void GameFlappyScreen::_tick()
   }
 }
 
-void GameFlappyScreen::_syncWidgets()
+void GameFlappyScreen::_sync()
 {
-  if (_state == STATE_PLAY) {
-    lv_obj_set_y(_bird, (int16_t)_birdY);
-    for (uint8_t i = 0; i < kMaxPipes; i++) {
-      if (i >= _pipeCount) {
-        lv_obj_add_flag(_pipeT[i], LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(_pipeB[i], LV_OBJ_FLAG_HIDDEN);
-        continue;
-      }
-      int gapTop = _pipes[i].gapY - _gapH / 2;
-      int gapBot = _pipes[i].gapY + _gapH / 2;
-      lv_obj_clear_flag(_pipeT[i], LV_OBJ_FLAG_HIDDEN);
-      lv_obj_clear_flag(_pipeB[i], LV_OBJ_FLAG_HIDDEN);
-      lv_obj_set_pos(_pipeT[i], _pipes[i].x, 0);
-      lv_obj_set_size(_pipeT[i], kPipeW, gapTop);
-      lv_obj_set_pos(_pipeB[i], _pipes[i].x, gapBot);
-      lv_obj_set_size(_pipeB[i], kPipeW, (_arenaH - kGroundH) - gapBot);
+  if (_state != ST_PLAY) return;
+  lv_obj_set_y(_bird, (int16_t)_birdY);
+
+  for (int i = 0; i < kMaxPipes; i++) {
+    if (i >= _pipeCount) {
+      lv_obj_add_flag(_pipeT[i], LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(_pipeTC[i], LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(_pipeB[i], LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(_pipeBC[i], LV_OBJ_FLAG_HIDDEN);
+      continue;
     }
+    // Sizes are set once per life of a pipe (gapY never changes) — resizing
+    // every frame forced a layout pass + large invalidations each tick and
+    // the game ground to a stutter once the pipe slots filled up.
+    int gapTop = _pipes[i].gapY - _gapH / 2;
+    int gapBot = _pipes[i].gapY + _gapH / 2;
+    int x = _pipes[i].x;
+
+    lv_obj_clear_flag(_pipeT[i], LV_OBJ_FLAG_HIDDEN);
+    if (!_sizedT[i]) {
+      lv_obj_set_size(_pipeT[i], kPipeW, gapTop - kCapH);
+      _sizedT[i] = true;
+    }
+    lv_obj_set_pos(_pipeT[i], x, 0);
+    lv_obj_clear_flag(_pipeTC[i], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_pos(_pipeTC[i], x - (kCapW - kPipeW) / 2, gapTop - kCapH);
+
+    lv_obj_clear_flag(_pipeB[i], LV_OBJ_FLAG_HIDDEN);
+    if (!_sizedB[i]) {
+      lv_obj_set_size(_pipeB[i], kPipeW, (_arenaH - kGroundH) - gapBot - kCapH);
+      _sizedB[i] = true;
+    }
+    lv_obj_set_pos(_pipeB[i], x, gapBot + kCapH);
+    lv_obj_clear_flag(_pipeBC[i], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_pos(_pipeBC[i], x - (kCapW - kPipeW) / 2, gapBot);
   }
+}
+
+void GameFlappyScreen::_menuFocus()
+{
+  if (_state != ST_MENU || !_overlay) return;
+  for (int i = 0; i < 3; i++) gamekit::focusRow(_ovRows[i], i == _menuIdx);
 }
 
 // ── frame loop ──────────────────────────────────────────────────────────────
 
 void GameFlappyScreen::onUpdate()
 {
-  // menu focus styling
-  if (_state == STATE_MENU && _overlay) {
-    for (int i = 0; i < _ovRowCount; i++) {
-      lv_color_t fg = (i == _menuIdx) ? lv_color_black()
-                                      : lv_color_white();
-      lv_color_t bg = (i == _menuIdx) ? col16(Config.getThemeColor())
-                                      : lv_color_hex(0x101a26);
-      lv_obj_set_style_text_color(_ovRows[i], fg, 0);
-      lv_obj_set_style_bg_color(_ovRows[i], bg, 0);
-      lv_obj_set_style_bg_opa(_ovRows[i], LV_OPA_COVER, 0);
-      lv_obj_set_style_pad_hor(_ovRows[i], 12, 0);
-      lv_obj_set_style_pad_ver(_ovRows[i], 4, 0);
-      lv_obj_set_style_radius(_ovRows[i], 4, 0);
-    }
-  }
+  _menuFocus();
 
-  if (Uni.Nav->wasPressed()) {
-    auto dir = Uni.Nav->readDirection();
+  auto dir = _nav.poll();
 
-    if (_state == STATE_MENU) {
-      if (dir == INavigation::DIR_UP)   { _menuIdx = (_menuIdx + 2) % 3; }
-      if (dir == INavigation::DIR_DOWN) { _menuIdx = (_menuIdx + 1) % 3; }
-      if (dir == INavigation::DIR_PRESS) {
+  if (dir != INavigation::DIR_NONE) {
+    if (_state == ST_MENU) {
+      if      (dir == INavigation::DIR_UP)   _menuIdx = (_menuIdx + 2) % 3;
+      else if (dir == INavigation::DIR_DOWN) _menuIdx = (_menuIdx + 1) % 3;
+      else if (dir == INavigation::DIR_BACK) { Screen.goBack(); return; }
+      else if (dir == INavigation::DIR_PRESS) {
         if      (_menuIdx == 0) _startPlay();
         else if (_menuIdx == 1) _showScores();
-        else                    { Screen.goBack(); return; }
+        else                  { Screen.goBack(); return; }
       }
-    } else if (_state == STATE_PLAY) {
+    } else if (_state == ST_PLAY) {
       if (dir == INavigation::DIR_PRESS || dir == INavigation::DIR_UP) _flap();
       else if (dir == INavigation::DIR_BACK) _showMenu();
-    } else if (_state == STATE_RESULT) {
-      if (dir == INavigation::DIR_PRESS) _startPlay();
+    } else if (_state == ST_RESULT) {
+      if      (dir == INavigation::DIR_PRESS) _startPlay();
       else if (dir == INavigation::DIR_BACK) _showMenu();
-    } else if (_state == STATE_SCORES) {
-      if (dir != INavigation::DIR_NONE) _showMenu();
+    } else if (_state == ST_SCORES) {
+      _showMenu();
     }
   }
 
-  // physics tick (play state) — 33 ms
-  if (_state == STATE_PLAY) {
+  // physics — fixed tick with catch-up (bounded so a slow frame can't teleport)
+  if (_state == ST_PLAY) {
     uint32_t now = millis();
-    if (now - _lastTickMs >= 33) {
-      _lastTickMs = now;
+    int steps = 0;
+    while (now - _lastTickMs >= (uint32_t)kTickMs && steps < 4) {
+      if (_state != ST_PLAY) { _lastTickMs = now; break; }
+      _lastTickMs += kTickMs;
       _tick();
+      steps++;
     }
+    if (steps == 4) _lastTickMs = now;
+    _sync();
   }
 }
 
 void GameFlappyScreen::onRender()
 {
-  _syncWidgets();
-  LvglUi::pump();   // legacy screens must pump LVGL themselves (no shell loop here)
+  // Nothing per-frame here — the LVGL shell calls render() once at init;
+  // live updates happen in onUpdate() (see _sync).
 }
 
 #else  // ── legacy TFT build (unchanged) ──────────────────────────────────────

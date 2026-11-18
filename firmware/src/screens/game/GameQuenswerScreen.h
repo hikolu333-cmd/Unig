@@ -2,14 +2,17 @@
 
 #include "ui/templates/BaseScreen.h"
 
-#ifdef USE_LVGL_SHELL
+#if defined(USE_LVGL_SHELL) && !defined(GAME_TFT_CANVAS)
 // ─────────────────────────────────────────────────────────────────────────────
-// Quenswer — native LVGL build. Two-player letter quiz: P1 sets the answer
-// (stick char-cycler) and an attempt budget, P2 guesses letter by letter
-// (hangman-style reveals). Longer answers + tighter budgets score higher.
+// Quenswer — native LVGL build. Two-player letter quiz: P1 sets a hidden
+// answer with the stick (UP/DOWN cycle, PRESS place & advance, RIGHT skip,
+// BACK delete; an explicit FINISH button ends input — no hidden trap), then
+// picks the attempt budget. P2 guesses letter by letter; hits reveal.
+// Score: letters x10 + saved attempts x20.
 // ─────────────────────────────────────────────────────────────────────────────
 #include <lvgl.h>
 #include "ui/lvgl/LvglUi.h"
+#include "ui/lvgl/GameNav.h"
 
 class GameQuenswerScreen : public BaseScreen
 {
@@ -23,42 +26,38 @@ public:
   void onRender() override;
 
 private:
-  enum State { ST_SETUP, ST_HANDOFF, ST_PLAY, ST_RESULT };
+  enum State { ST_SETUP, ST_BUDGET, ST_HANDOFF, ST_PLAY, ST_RESULT };
 
-  static constexpr uint8_t kMaxLen = 14;
-  static constexpr uint8_t kMaxTries = 6;
+  static constexpr int kMaxLen = 10;
 
   State   _state = ST_SETUP;
   char    _answer[kMaxLen + 1] = {};
   uint8_t _answerLen = 0;
-  char    _revealed[kMaxLen + 1] = {};
-  uint8_t _pos = 0;         // setup cursor
-  char    _letter = 'A';    // cycled char
-  uint8_t _budget = 6;      // attempts for P2
+  uint8_t _revealed[kMaxLen + 1] = {};
+  char    _entry[kMaxLen] = { 'A' };
+  int8_t  _pos = 0;                 // cursor: 0..kMaxLen-1 cells, kMaxLen = FINISH
+  uint8_t _budget = 6;
   uint8_t _used = 0;
+  int     _bestScore = 0;
   uint32_t _flashUntil = 0;
-  int      _bestScore = 0;
+
+  GameNav _nav;
 
   lv_obj_t* _arena = nullptr;
-  lv_obj_t* _title = nullptr;
-  lv_obj_t* _cellsCont = nullptr;
   lv_obj_t* _cells[kMaxLen] = {};
+  lv_obj_t* _finishBtn = nullptr;
   lv_obj_t* _status = nullptr;
   lv_obj_t* _hint = nullptr;
   lv_obj_t* _overlay = nullptr;
-  lv_obj_t* _ovTitle = nullptr;
-  lv_obj_t* _ovSub = nullptr;
 
   void _build();
   void _refreshCells();
-  void _cycle(int dir);
-  void _confirmChar();
-  void _backspace();
-  void _finishSetup();
+  void _showBudget();
   void _showHandoff();
   void _showResult(bool solved);
   void _hideOverlay();
   void _guess();
+  void _resetSetup();
 };
 
 #else  // legacy — original from the repository

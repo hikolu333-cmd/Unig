@@ -3,6 +3,9 @@
 //
 
 #include "IRScreen.h"
+#ifdef USE_LVGL_SHELL
+#include "screens/module/IRBrandZapScreen.h"
+#endif
 #include "ui/actions/ShowStatusAction.h"
 #include "utils/ir/PowerBlast.h"
 #include "utils/uart/UartFileManager.h"
@@ -87,7 +90,11 @@ void IRScreen::_showMenu() {
   // Re-read pins in case they were changed under Settings > Pin Setting.
   _txPin = (int8_t)PinConfig.getInt(PIN_CONFIG_IR_TX, PIN_CONFIG_IR_TX_DEFAULT);
   _rxPin = (int8_t)PinConfig.getInt(PIN_CONFIG_IR_RX, PIN_CONFIG_IR_RX_DEFAULT);
+#ifdef USE_LVGL_SHELL
+  setItems(_menuItems, 8, _menuReturnIndex);
+#else
   setItems(_menuItems, 7, _menuReturnIndex);
+#endif
 }
 
 void IRScreen::onUpdate() {
@@ -335,6 +342,13 @@ void IRScreen::onItemSelected(uint8_t index) {
         _showMenu();
         break;
       }
+
+#ifdef USE_LVGL_SHELL
+      case 7: { // Brand Zap — brand-scoped POWER volley (TV/projector library)
+        Screen.push(new IRBrandZapScreen());
+        break;
+      }
+#endif
     }
     return;
   }

@@ -2,14 +2,17 @@
 
 #include "ui/templates/BaseScreen.h"
 
-#ifdef USE_LVGL_SHELL
+#if defined(USE_LVGL_SHELL) && !defined(GAME_TFT_CANVAS)
 // ─────────────────────────────────────────────────────────────────────────────
 // Decoder — native LVGL build. Timed hex-code crack with Mastermind-style
-// feedback (green = right char+place, orange = right char wrong place).
-// UP/DOWN cycle hex digit, LEFT/RIGHT move, PRESS lock digit / submit.
+// marks. Geometry: arena 320×206 — grid 8 rows × 4 cols, cell 36×19 + 3px
+// gaps → 173px tall at y=28 (fits with the title row). UP/DOWN cycle the
+// hex digit at the cursor (GameNav held-repeat), LEFT/RIGHT move, PRESS
+// submit the row, BACK = menu. Difficulty changes the countdown: 90/60/30 s.
 // ─────────────────────────────────────────────────────────────────────────────
 #include <lvgl.h>
 #include "ui/lvgl/LvglUi.h"
+#include "ui/lvgl/GameNav.h"
 
 class GameDecoderScreen : public BaseScreen
 {
@@ -25,41 +28,42 @@ public:
 private:
   enum State { ST_MENU, ST_PLAY, ST_RESULT };
 
-  static constexpr uint8_t kCodeLen = 4;
-  static constexpr uint8_t kMaxTries = 8;
-  static constexpr uint8_t kDiffN   = 3;
+  static constexpr int kCodeLen  = 4;
+  static constexpr int kMaxTries = 8;
+  static constexpr int kDiffN    = 3;
   static const char* const kDiffNames[kDiffN];
   static constexpr uint32_t kTimeMs[kDiffN] = { 90000, 60000, 30000 };
 
-  State   _state = ST_MENU;
-  int8_t  _menuIdx = 0;
-  uint8_t _diff = 0;
-  char    _secret[kCodeLen + 1] = {};
-  char    _grid[kMaxTries][kCodeLen + 1] = {};
-  uint8_t _marks[kMaxTries][kCodeLen] = {};
-  uint8_t _row = 0;
-  uint8_t _col = 0;
-  uint8_t _digit = 0;         // 0..15 cycling at the cursor
-  uint8_t _entry[kCodeLen] = {};   // chosen digit per cell
+  State    _state = ST_MENU;
+  int8_t   _menuIdx = 0;
+  uint8_t  _diff = 0;
+  char     _secret[kCodeLen + 1] = {};
+  char     _grid[kMaxTries][kCodeLen + 1] = {};
+  uint8_t  _marks[kMaxTries][kCodeLen] = {};   // 0 grey 1 yellow 2 green
+  uint8_t  _row = 0;
+  uint8_t  _col = 0;
+  uint8_t  _entry[kCodeLen] = {};              // chosen digit per cell
   uint32_t _endMs = 0;
-  uint8_t  _best[kDiffN] = {};
+  int      _best[kDiffN] = {};
+
+  GameNav  _nav;
 
   lv_obj_t* _arena = nullptr;
   lv_obj_t* _timer = nullptr;
   lv_obj_t* _cells[kMaxTries][kCodeLen] = {};
-  lv_obj_t* _hint = nullptr;
   lv_obj_t* _overlay = nullptr;
   lv_obj_t* _ovRows[4] = {};
-  uint8_t  _ovN = 0;
 
   void _build();
   void _showMenu();
+  void _showBest();
   void _hideOverlay();
   void _showResult(bool win);
   void _startPlay();
-  void _refreshRow(uint8_t row);
-  void _markRow(uint8_t row);
+  void _refreshRow(int row);
+  void _markRow(int row);
   void _submitRow();
+  void _paintCell(int r, int c);
 };
 
 #else  // legacy — original from the repo
@@ -87,7 +91,7 @@ private:
 
   static constexpr uint8_t kInputLen   = 4;
   static constexpr uint8_t kMaxHistory = 14;  // max attempts across all difficulties (Easy=14)
-  static constexpr uint8_t kCharDBLen  = 16;
+  static constexpr uint8_t kCharDBLen  = 10;
   static constexpr uint8_t kMaxScores  = 5;
   static constexpr uint8_t kMenuItems  = 4;
   static constexpr uint8_t kDiffCount  = 4;

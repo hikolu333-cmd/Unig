@@ -19,7 +19,8 @@
 static DisplayImpl    display;
 static NavigationImpl navigation;
 static PowerImpl      power;
-static ExtSpiClass    rfSpi(HSPI);   // CC1101 + NRF24 share SCK=12/MOSI=11/MISO=13
+static ExtSpiClass    rfSpi(HSPI);   // CC1101: SCK=12/MOSI=11/MISO=13
+static ExtSpiClass    nrfSpi(VSPI);  // NRF24: dedicated bus SCK=18/MOSI=17/MISO=16
 
 //
 // Service console — radio re-arm key 'r' only.
@@ -46,21 +47,19 @@ Device* Device::createInstance() {
   pinMode(LCD_BL, OUTPUT);
   digitalWrite(LCD_BL, HIGH);
 
-  // RF bus housekeeping (solder map): CC1101 + four NRF24 sit on the same
-  // SPI bus. Assert every CS high before init — a floating CSN during
-  // another device's transfer corrupts the bus (reaper/t_embed lesson).
-  // Firmware drives only NRF module N1; the other three stay deselected
-  // (CSN high) with CE low (radio idle).
-static const uint8_t rfCsPins[] = { CC1101_CS_PIN, NRF24_CSN_PIN,
-                               17, 18, 8 };          // N2/N3/N4 CSN
+  // RF bus housekeeping: assert every CS high before init — a floating CSN
+  // during another device's transfer corrupts the bus. GPIO16–18 belong to
+  // the dedicated NRF SPI bus now, so only real CE/CSN pads are touched.
+  static const uint8_t rfCsPins[] = { CC1101_CS_PIN, 6, 15 };   // N1/N2 CSN
   for (auto pin : rfCsPins) { pinMode(pin, OUTPUT); digitalWrite(pin, HIGH); }
-  static const uint8_t rfCePins[] = { NRF24_CE_PIN, 6, 7, 15 };  // N1..N4 CE
+  static const uint8_t rfCePins[] = { 5, 7 };                    // N1/N2 CE
   for (auto pin : rfCePins) { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); }
 
   Wire.begin(GROVE_SDA, GROVE_SCL);  // Grove I2C (ExI2C) — free for add-ons
   rfSpi.begin(SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN, -1);
+  nrfSpi.begin(NRF_SPI_SCK_PIN, NRF_SPI_MISO_PIN, NRF_SPI_MOSI_PIN, -1);
 
-  auto* dev = new Device(display, power, &navigation, nullptr, &rfSpi, nullptr);
+  auto* dev = new Device(display, power, &navigation, nullptr, &rfSpi, nullptr, &nrfSpi);
   dev->ExI2C = &Wire;
   return dev;
 }

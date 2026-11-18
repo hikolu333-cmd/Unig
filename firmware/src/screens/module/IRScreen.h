@@ -42,7 +42,7 @@ private:
   uint8_t _menuReturnIndex = 0;
 
   // Menu — IR TX/RX pins are configured under Settings > Pin Setting.
-  ListItem _menuItems[7] = {
+  ListItem _menuItems[8] = {
     {"Quick Off"},
     {"Receive"},
     {"Send"},
@@ -50,6 +50,7 @@ private:
     {"TV-B-Gone"},
     {"Power Blast"},
     {"Instant Off"},
+    {"Brand Zap"},
   };
 
   void _showMenu();

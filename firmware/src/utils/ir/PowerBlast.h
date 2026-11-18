@@ -16,6 +16,7 @@
 #pragma once
 #include <Arduino.h>
 #include <IRsend.h>
+#include "IrEmit.h"
 
 namespace PowerBlast {
 
@@ -199,8 +200,11 @@ inline int quickBlast(IRsend& s, const char* spec, bool (*cancelCb)() = nullptr)
   return n;
 }
 
-// Instant Off: fire the instant window (~6 s, no menu dive).
-// `spec` — optional saved Quick Off window (replayed first when non-empty).
+// Instant Off: turbo volley. NEC-family codes fire a single frame (receivers
+// latch on the first frame — the second was only repeat insurance) with a
+// 15 ms gap; bi-phase RC5/RC6 still double up because their decoders need
+// two frames to lock. The DEXP/Vestel NEC 0x0 zone leads the table, so
+// common ODM TVs die within the first ~2 seconds.
 inline int instantOff(IRsend& s, const char* spec = nullptr,
                       bool (*cancelCb)() = nullptr,
                       void (*progressCb)(int, int) = nullptr) {
@@ -212,10 +216,15 @@ inline int instantOff(IRsend& s, const char* spec = nullptr,
   for (int i = 0; i < COUNT_INSTANT; i++) {
     if (cancelCb && cancelCb()) break;
     const Code& c = TABLE_INSTANT[i];
-    sendCode(s, c.proto, c.address, c.command, c.bits);
+    bool biphase = !strcmp(c.proto, "RC5") || !strcmp(c.proto, "RC6");
+    IrEmit::fireOnce(s, c.proto, c.address, c.command, c.bits);
+    if (biphase) {
+      delay(15);
+      IrEmit::fireOnce(s, c.proto, c.address, c.command, c.bits);
+    }
     n++;
     if (progressCb) progressCb(n, COUNT_INSTANT);
-    delay(55);
+    delay(15);
   }
   return n;
 }
@@ -234,52 +243,12 @@ inline int blastAll(IRsend& s, int mode, bool (*cancelCb)() = nullptr,
 #endif
 
   auto emit = [&](const char* proto, uint32_t address, uint32_t command, uint16_t bits) {
-    if (!strcmp(proto, "NEC")) {
-      uint32_t addr = address & 0xFFFF, cmd = command & 0xFF;
-      uint32_t a1 = addr & 0xFF;
-      uint32_t a2 = (addr > 0xFF) ? ((addr >> 8) & 0xFF) : (~a1 & 0xFF);
-      uint32_t frame = (a1 << 24) | (a2 << 16) | (cmd << 8) | (~cmd & 0xFF);
-      s.sendNEC(frame, 32);
-      delay(40); s.sendNEC(frame, 32);
-    } else if (!strcmp(proto, "SAMSUNG")) {
-      uint32_t frame = ((address & 0xFF) << 24) | ((~address & 0xFF) << 16)
-                    | ((command & 0xFF) << 8) | (~command & 0xFF);
-      s.sendSAMSUNG(frame, 32);
-      delay(40); s.sendSAMSUNG(frame, 32);
-    } else if (!strcmp(proto, "SONY")) {
-      uint32_t frame = (command & 0x7F)
-                    | ((address & ((1u << (bits - 7)) - 1)) << 7);
-      s.sendSony(frame, bits, 2);
-    } else if (!strcmp(proto, "RC5")) {
-      uint16_t frame = s.encodeRC5((uint8_t)(address & 0x1F), (uint8_t)(command & 0x3F));
-      s.sendRC5(frame, 13);
-      delay(30); s.sendRC5(frame, 13);
-    } else if (!strcmp(proto, "RC6")) {
-      uint64_t frame = s.encodeRC6(address & 0xFFFF, (uint8_t)(command & 0xFF));
-      s.sendRC6(frame, 20);
-      delay(30); s.sendRC6(frame, 20);
-    } else if (!strcmp(proto, "JVC")) {
-      uint16_t frame = s.encodeJVC((uint8_t)(address & 0xFF), (uint8_t)(command & 0xFF));
-      s.sendJVC(frame, 16, true);
-      delay(30); s.sendJVC(frame, 16, true);
-    } else if (!strcmp(proto, "SHARP")) {
-      s.sendSharp((uint16_t)(address & 0x1F), (uint16_t)(command & 0xFF));
-      delay(30); s.sendSharp((uint16_t)(address & 0x1F), (uint16_t)(command & 0xFF));
-    } else if (!strcmp(proto, "MITSU")) {
-      uint64_t frame = ((uint64_t)(address & 0xFF) << 8) | (command & 0xFF);
-      s.sendMitsubishi(frame, 16);
-      delay(30); s.sendMitsubishi(frame, 16);
-    } else if (!strcmp(proto, "PANA")) {
-      uint64_t val = s.encodePanasonic(0x4004, (uint8_t)(address & 0xFF),
-                                       (uint8_t)((address >> 8) & 0xFF),
-                                       (uint8_t)(command & 0xFF));
-      s.sendPanasonic64(val);
-      delay(30); s.sendPanasonic64(val);
-    }
+    IrEmit::fire(s, proto, address, command, bits);
     n++;
     if (progressCb) progressCb(n, total);
   };
 
+#ifndef BOARD_4MB
   if (mode == 1) {
     for (int i = 0; i < COUNT_ALL; i++) {
       if (cancelCb && cancelCb()) return n;
@@ -296,7 +265,9 @@ inline int blastAll(IRsend& s, int mode, bool (*cancelCb)() = nullptr,
       if (progressCb) progressCb(n, total);
       delay(50);
     }
-  } else {
+  } else
+#endif
+  {
     for (int i = 0; i < COUNT; i++) {
       if (cancelCb && cancelCb()) break;
       const Code& c = TABLE[i];

@@ -61,12 +61,19 @@ static const uint8_t SCL = GROVE_SCL;
 #define CC1101_CS_PIN    10
 #define CC1101_GDO0_PIN   9
 
-// ─── NRF24L01+ (RF bus; firmware drives module N1, jam-all drives all 4) ──
+// ─── NRF24L01+ (own SPI bus, module wired straight to the S3) ────────────
+// NRF SPI: SCK=18 MOSI=17 MISO=16 (SPI3/VSPI). Two pads only: N1 CE=5/CSN=6,
+// N2 CE=7/CSN=15. GPIO16–18 are the NRF bus now — they must never be used
+// as CE/CSN (a scan toggling them would corrupt the bus).
+#define NRF_SPI_SCK_PIN   18
+#define NRF_SPI_MISO_PIN  16
+#define NRF_SPI_MOSI_PIN  17
+
 #define NRF24_CE_PIN     5
-#define NRF24_CSN_PIN   16
-#define NRF24_COUNT      4
-#define NRF24_CE_PINS    { 5, 6, 7, 15 }
-#define NRF24_CSN_PINS   { 16, 17, 18, 8 }
+#define NRF24_CSN_PIN    6
+#define NRF24_COUNT      2
+#define NRF24_CE_PINS    { 5, 7 }
+#define NRF24_CSN_PINS   { 6, 15 }
 
 // ─── IR (KY-005 LED) ──────────────────────────────────────
 #define IR_TX_PIN  14

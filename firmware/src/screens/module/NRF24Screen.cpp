@@ -18,6 +18,21 @@
 // DuckyScript payloads live here; created on demand before the picker opens.
 static constexpr const char* kMjDuckyDir = "/unigeek/ducky";
 
+// Bit-bang SPI exchange — ground truth without the SPI peripheral: pins are
+// plain GPIO, so a wiring fault can't hide behind driver/pin-attach issues.
+static uint8_t bbXfer(int8_t sck, int8_t out, int8_t in, uint8_t data) {
+  uint8_t r = 0;
+  for (int i = 7; i >= 0; i--) {
+    digitalWrite(out, (data >> i) & 0x01);
+    delayMicroseconds(2);
+    digitalWrite(sck, HIGH);
+    delayMicroseconds(2);
+    r = (uint8_t)((r << 1) | (digitalRead(in) ? 1 : 0));
+    digitalWrite(sck, LOW);
+  }
+  return r;
+}
+
 // ══════════════════════════════════════════════════════════════
 // ═══════════════ CHANNEL LISTS (jammer) ═══════════════════
 // ══════════════════════════════════════════════════════════════
@@ -129,7 +144,77 @@ void NRF24Screen::onInit() {
   render();
   ProgressView::init();
   ProgressView::progress("Starting NRF24...", 30);
-  if (!_radioBegin()) {
+  if (!_radioBeginRetry()) {
+    // Auto-detect: the configured module may not be the soldered one
+    // (solder map N1..N4: CE {5,7,16,18}, CSN {6,15,17,8}). Walk the
+    // positions with retries (the daisy-chained SPI is flaky on a cold
+    // boot), first chip that answers becomes the active module.
+    static const uint8_t ce[]  = NRF24_CE_PINS;
+    static const uint8_t csn[] = NRF24_CSN_PINS;
+    Serial.printf("[NRF] default CE=%d CSN=%d FAILED, autodetect:\n",
+                  (int)_cePin, (int)_csnPin);
+    for (int k = 0; k < NRF24_COUNT; k++) {
+      _cePin  = (int8_t)ce[k];
+      _csnPin = (int8_t)csn[k];
+      Serial.printf("[NRF] try N%d CE=%d CSN=%d\n", k + 1, ce[k], csn[k]);
+      if (_radioBeginRetry()) {
+        PinConfig.set(PIN_CONFIG_NRF24_CE,  String(_cePin));
+        PinConfig.set(PIN_CONFIG_NRF24_CSN, String(_csnPin));
+        PinConfig.save(Uni.Storage);
+        char msg[48];
+        snprintf(msg, sizeof(msg), "NRF24 found: module N%d", k + 1);
+        ShowStatusAction::show(msg);
+        break;
+      }
+      _cePin = _csnPin = -1;
+    }
+  }
+  // NOTE: no re-begin here — the radio probed above is already up. A second
+  // begin on the same flaky daisy chain used to fail and false-flag a
+  // detected module as "not detected" (the config had N3 saved but the
+  // screen still errored out). _radioEnd below parks the radio; later
+  // actions begin it again through the retry helper.
+  if (_cePin < 0) {
+    // HW-SPI ground truth on the NRF's own bus. Three probes:
+    //   loopback — CCSN high, send 0x55: if GPIO17 is jumpered to GPIO16 the
+    //              byte returns intact, proving SCK/MOSI/MISO pads and the
+    //              SPI3 peripheral are electrically alive;
+    //   scan     — NOP read of nRF24 STATUS per CE/CSN pad (live chip → 0x0E);
+    //   swap     — same scan with MOSI/MISO pins exchanged, catching adapter
+    //              boards whose MO/MI silkscreen is mirrored from factory.
+    static const uint8_t scan[] = { 5, 6, 7, 15 };
+    static const uint8_t ce[]  = NRF24_CE_PINS;
+    for (int j = 0; j < 4; j++) { pinMode(scan[j], OUTPUT); digitalWrite(scan[j], HIGH); }
+    for (int j = 0; j < NRF24_COUNT; j++) { pinMode(ce[j], OUTPUT); digitalWrite(ce[j], LOW); }
+    _bus()->beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    uint8_t lb = _bus()->transfer(0x55);
+    Serial.printf("[NRF] loopback 17<->16 = 0x%02X %s\n", lb,
+                  lb == 0x55 ? "BUS ALIVE" : "(no jumper — expected)");
+    for (int k = 0; k < 4; k++) {
+      digitalWrite(scan[k], LOW);
+      delayMicroseconds(2);
+      uint8_t st = _bus()->transfer(0xFF);   // NOP → STATUS
+      digitalWrite(scan[k], HIGH);
+      delayMicroseconds(50);
+      if (st != 0x00 && st != 0xFF)
+        Serial.printf("[NRF] *** ANSWER on CSN=%d status=0x%02X ***\n", scan[k], st);
+    }
+    _bus()->endTransaction();
+    // pass 2: MOSI/MISO exchanged (SPI3 re-begun with the pins swapped)
+    _bus()->begin(NRF_SPI_SCK_PIN, NRF_SPI_MOSI_PIN, NRF_SPI_MISO_PIN, -1);
+    _bus()->beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    for (int k = 0; k < 4; k++) {
+      digitalWrite(scan[k], LOW);
+      delayMicroseconds(2);
+      uint8_t st = _bus()->transfer(0xFF);
+      digitalWrite(scan[k], HIGH);
+      delayMicroseconds(50);
+      if (st != 0x00 && st != 0xFF)
+        Serial.printf("[NRF] *** ANSWER with MOSI/MISO SWAPPED on CSN=%d status=0x%02X ***\n", scan[k], st);
+    }
+    _bus()->endTransaction();
+    _bus()->begin(NRF_SPI_SCK_PIN, NRF_SPI_MISO_PIN, NRF_SPI_MOSI_PIN, -1);
+    Serial.println("[NRF] hw scan done");
     ShowStatusAction::show("NRF24 not detected");
     Screen.goBack();
     return;
@@ -160,9 +245,25 @@ void NRF24Screen::_showMenu() {
   setItems(_mainItems, 5, _menuReturnIndex);
 }
 
+// NRF24's own SPI bus when the board provides one (diy_joystick wires the
+// module to SPI3: SCK=18/MOSI=17/MISO=16), otherwise the shared RF bus.
+ExtSpiClass* NRF24Screen::_bus() const {
+  return Uni.NrfSpi ? Uni.NrfSpi : Uni.Spi;
+}
+
 bool NRF24Screen::_radioBegin() {
-  if (!Uni.Spi || _cePin < 0 || _csnPin < 0) return false;
-  return _nrf.begin(Uni.Spi, _cePin, _csnPin);
+  if (!_bus() || _cePin < 0 || _csnPin < 0) return false;
+  return _nrf.begin(_bus(), _cePin, _csnPin);
+}
+
+// Robust begin: the CC1101→N3→N2→N1 SPI daisy chain is marginal on a
+// cold boot — retry a few times before giving up.
+bool NRF24Screen::_radioBeginRetry() {
+  for (int t = 0; t < 3; t++) {
+    if (_radioBegin()) return true;
+    delay(25);
+  }
+  return false;
 }
 
 void NRF24Screen::_radioEnd() {
@@ -178,7 +279,7 @@ void NRF24Screen::onItemSelected(uint8_t index) {
     _menuReturnIndex = index;
     if (index == 0) {
       // ── Spectrum ──────────────────────────────────────────
-      if (!_radioBegin()) {
+      if (!_radioBeginRetry()) {
         ShowStatusAction::show("NRF24 not detected");
         render();
         return;
@@ -573,7 +674,7 @@ static void shuffleChannels(uint8_t* arr, size_t count) {
 }
 
 void NRF24Screen::_startJammer() {
-  if (!_radioBegin()) {
+  if (!_radioBeginRetry()) {
     ShowStatusAction::show("NRF24 not detected");
     render();
     return;
@@ -677,7 +778,7 @@ void NRF24Screen::_startJamAll() {
   const int     n     = 1;
 #endif
 
-  const int online = NrfJammer::start(Uni.Spi, ce, csn, n);
+  const int online = NrfJammer::start(_bus(), ce, csn, n);
   if (online == 0) {
     ShowStatusAction::show("No NRF24 detected");
     render();
@@ -761,7 +862,7 @@ void NRF24Screen::_renderJamAllStatus() {
 // setup, and mind your local spectrum regs for unmodulated carrier on ISM.
 
 void NRF24Screen::_startRfTest() {
-  if (!_radioBegin()) {
+  if (!_radioBeginRetry()) {
     ShowStatusAction::show("NRF24 not detected");
     render();
     return;
@@ -819,7 +920,7 @@ void NRF24Screen::_renderRfTest() {
 // ══════════════════════════════════════════════════════════════
 
 void NRF24Screen::_setupMjScan() {
-  if (!_radioBegin()) {
+  if (!_radioBeginRetry()) {
     ShowStatusAction::show("NRF24 not detected");
     render();
     return;

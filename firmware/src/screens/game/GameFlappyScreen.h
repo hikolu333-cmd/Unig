@@ -2,24 +2,23 @@
 
 #include "ui/templates/BaseScreen.h"
 
-#ifdef USE_LVGL_SHELL
+#if defined(USE_LVGL_SHELL) && !defined(GAME_TFT_CANVAS)
 // ─────────────────────────────────────────────────────────────────────────────
-// Flappy Bird — native LVGL build (USE_LVGL_SHELL boards).
-//
-// No sprites, no canvas, no per-frame byte swaps: the bird is a rounded lv_obj,
-// pipes are lv_obj rectangles, score is a label. Motion = lv_obj_set_pos per
-// physics tick (LVGL invalidates only the moved regions). This sidesteps the
-// SpriteCanvas full-frame pipeline entirely — the class of hard hangs the
-// sprite-port games showed.
+// Flappy — native LVGL build. Composite-object bird (body/wing/eye/beak),
+// pipes with caps, drifting clouds, sandy ground. Widget positions are
+// synced from the physics state EVERY frame in onUpdate() — onRender() is
+// not called per-loop in the LVGL shell, so onRender() must not carry the
+// sync (that was the frozen-pipes bug of the first port).
 // ─────────────────────────────────────────────────────────────────────────────
 #include <lvgl.h>
 #include "ui/lvgl/LvglUi.h"
+#include "ui/lvgl/GameNav.h"
 
 class GameFlappyScreen : public BaseScreen
 {
 public:
-  const char* title()     override { return "Flappy Bird"; }
-  bool inhibitPowerSave() override { return _state == STATE_PLAY; }
+  const char* title()     override { return "Flappy"; }
+  bool inhibitPowerSave() override { return _state == ST_PLAY; }
   bool inhibitPowerOff()  override { return true; }
 
   void onInit()   override;
@@ -27,58 +26,69 @@ public:
   void onRender() override;
 
 private:
-  enum State { STATE_MENU, STATE_PLAY, STATE_RESULT, STATE_SCORES };
+  enum State { ST_MENU, ST_PLAY, ST_RESULT, ST_SCORES };
+  struct Pipe { int16_t x; int16_t gapY; bool scored; };
 
-  // ── physics (same constants as the legacy build) ───────────────────────
-  static constexpr float    kGravity   = 0.35f;
-  static constexpr float    kFlapForce = -3.2f;
-  static constexpr uint8_t  kGroundH  = 6;
-  static constexpr uint8_t  kBirdW     = 12;
-  static constexpr uint8_t  kBirdH     = 10;
-  static constexpr uint8_t  kPipeW     = 16;
-  static constexpr uint8_t  kMaxPipes  = 4;
-  static constexpr int      kBirdX     = 16;
+  static constexpr float   kGravity   = 0.35f;
+  static constexpr float   kFlapForce = -3.2f;
+  static constexpr int     kGroundH   = 14;
+  static constexpr int     kPipeW     = 26;
+  static constexpr int     kCapW      = 32;
+  static constexpr int     kCapH      = 10;
+  static constexpr int     kMaxPipes  = 4;
+  static constexpr int     kBirdX     = 52;
+  static constexpr int     kBirdW     = 18;
+  static constexpr int     kBirdH     = 14;
+  static constexpr int     kTickMs    = 33;
+  static constexpr int     kMaxClouds = 3;
 
-  struct Pipe { int16_t x; uint8_t gapY; bool scored; };
-  Pipe _pipes[kMaxPipes] = {};
-  uint8_t _pipeCount = 0;
+  State    _state = ST_MENU;
+  int8_t   _menuIdx = 0;
+  int      _best   = 0;
+  int      _score  = 0;
 
-  State   _state = STATE_MENU;
-  int8_t  _menuIdx = 0;
-  float   _birdY = 0;
-  float   _velocity = 0;
-  int     _score = 0;
-  int     _best  = 0;
-  uint32_t _lastTickMs = 0;
-  uint32_t _pipeTimer = 0;
-  uint8_t  _gapH = 0;
-  uint8_t  _pipeSpeed = 0;
-  uint16_t _pipeInterval = 0;
-  int16_t  _arenaW = 0;
-  int16_t  _arenaH = 0;
+  int16_t  _arenaW = 320, _arenaH = 206;
+  int      _gapH  = 70;
+  int      _pipeSpeed   = 2;
+  int      _pipeInterval = 1600;
+  int      _pipeTimer   = 0;
+  uint32_t _lastTickMs  = 0;
+  float    _birdY  = 100.0f;
+  float    _vel    = 0.0f;
+  uint8_t  _pipeCount = 0;
+  Pipe     _pipes[kMaxPipes] = {};
 
-  // ── widgets ──────────────────────────────────────────────────────────────
-  lv_obj_t* _arena   = nullptr;   // play field on viewParent()
-  lv_obj_t* _bird    = nullptr;
-  lv_obj_t* _pipeT[kMaxPipes] = {};
-  lv_obj_t* _pipeB[kMaxPipes] = {};
-  lv_obj_t* _ground  = nullptr;
-  lv_obj_t* _scoreL  = nullptr;
-  lv_obj_t* _overlay = nullptr;   // menu / result / scores panel
-  lv_obj_t* _ovRows[6] = {};
-  uint8_t  _ovRowCount = 0;
+  GameNav  _nav;
+
+  lv_obj_t* _arena  = nullptr;
+  lv_obj_t* _clouds[kMaxClouds] = {};
+  // Slot size latches: a pipe's gapY is fixed for its life, so the shaft
+  // resize happens once per pipe instead of every frame.
+  bool     _sizedT[kMaxPipes] = {};
+  bool     _sizedB[kMaxPipes] = {};
+  lv_obj_t* _pipeT[kMaxPipes] = {};   // upper pipe shaft
+  lv_obj_t* _pipeTC[kMaxPipes] = {};  // upper pipe cap (at the gap)
+  lv_obj_t* _pipeB[kMaxPipes] = {};   // lower pipe shaft
+  lv_obj_t* _pipeBC[kMaxPipes] = {};  // lower pipe cap (at the gap)
+  lv_obj_t* _ground = nullptr;
+  lv_obj_t* _bird   = nullptr;         // transparent group holding body parts
+  lv_obj_t* _scoreL = nullptr;
+  lv_obj_t* _overlay = nullptr;
+  lv_obj_t* _ovRows[3] = {};
 
   void _buildArena();
   void _showMenu();
-  void _showResult();
   void _showScores();
+  void _showResult();
   void _hideOverlay();
   void _startPlay();
-  void _tick();
   void _flap();
   void _spawnPipe();
   bool _collision() const;
-  void _syncWidgets();   // physics state → widget pos/size
+  void _tick();
+  void _sync();
+  void _menuFocus();
+  void _menuRows(const char* const* rows, int n);
 };
 
 #else  // legacy TFT boards — original implementation

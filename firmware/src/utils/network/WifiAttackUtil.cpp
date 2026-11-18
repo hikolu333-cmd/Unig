@@ -1,10 +1,15 @@
 #include "utils/network/WifiAttackUtil.h"
 #include <esp_wifi.h>
 
+// The classic-esp32 SDK (libnet80211.a) exports this symbol itself; S2/S3/C3
+// don't. Keep the stub only where the SDK lacks it, otherwise ld fails with a
+// multiple definition against libnet80211.a on classic esp32 builds.
+#ifndef CONFIG_IDF_TARGET_ESP32
 extern "C" int ieee80211_raw_frame_sanity_check(int32_t arg, int32_t arg2, int32_t arg3) {
   if (arg == 31337) return 1;
   return 0;
 }
+#endif
 
 WifiAttackUtil::WifiAttackUtil(bool initAP)
 {

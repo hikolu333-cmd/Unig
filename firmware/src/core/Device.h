@@ -79,6 +79,7 @@ public:
   IKeyboard*  Keyboard   = nullptr;
   ISpeaker*   Speaker    = nullptr;
   ExtSpiClass* Spi        = nullptr;  // shared SPI bus (nullable, board-specific)
+  ExtSpiClass* NrfSpi     = nullptr;  // dedicated NRF24 bus (nullable — falls back to Spi)
   int8_t      StorageDcPin = -1;     // shared DC/MISO GPIO — set by board before initStorage() if needed
   TwoWire*    ExI2C      = nullptr;  // free I2C for external modules (Grove port: NFC, GPS, sensors). Board begins on default pins; caller may re-begin(sda,scl) to retarget.
   TwoWire*    InI2C      = nullptr;  // internal I2C — used by on-board ICs that exist at boot (AXP, RTC, codec, keyboard, touch). Board-initialized; do not end() or re-begin.
@@ -94,10 +95,12 @@ private:
   Device(IDisplay& lcd, IPower& power, INavigation* nav,
         IKeyboard* keyboard = nullptr,
         ExtSpiClass* spi = nullptr,
-        ISpeaker* sound = nullptr)
+        ISpeaker* sound = nullptr,
+        ExtSpiClass* nrfSpi = nullptr)
      : Lcd(lcd), Power(power), Nav(nav), Server(SharedWebServer::instance()),
        Keyboard(keyboard),
        Spi(spi),
+       NrfSpi(nrfSpi),
        Speaker(sound) {}
   // Returns a heap-allocated instance — defined in Device.cpp
   static Device* createInstance();

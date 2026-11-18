@@ -1,17 +1,17 @@
 #pragma once
 
 #include "ui/templates/BaseScreen.h"
-#include "core/ConfigManager.h"
 
-#ifdef USE_LVGL_SHELL
+#if defined(USE_LVGL_SHELL) && !defined(GAME_TFT_CANVAS)
 // ─────────────────────────────────────────────────────────────────────────────
-// Wordle — native LVGL build. Letter grid (5×6) of rounded cells, on-stick
-// letter cycling (no keyboard needed): UP/DOWN cycle A–Z, RIGHT next slot,
-// LEFT back, PRESS submit, BACK delete. Green/yellow/grey marks per standard
-// Wordle rules. EN + ID languages share the class.
+// Wordle — native LVGL build. 5×6 key-cap grid, stick-only: UP/DOWN cycle the
+// letter at the cursor (GameNav held-repeat), LEFT/RIGHT move, PRESS submit,
+// BACK = exit. Standard marking (green exact / yellow misplaced / grey absent)
+// with a consumed-letter pass. EN + ID databases share the class.
 // ─────────────────────────────────────────────────────────────────────────────
 #include <lvgl.h>
 #include "ui/lvgl/LvglUi.h"
+#include "ui/lvgl/GameNav.h"
 
 class GameWordleScreen : public BaseScreen
 {
@@ -29,37 +29,35 @@ public:
   void onRender() override;
 
 private:
-  enum State { ST_PLAY, ST_WIN, ST_LOSS };
+  enum State { ST_PLAY, ST_END };
 
-  static constexpr uint8_t kWordLen  = 5;
-  static constexpr uint8_t kMaxTries = 6;
+  static constexpr int kWordLen  = 5;
+  static constexpr int kMaxTries = 6;
 
   Language _lang;
   State    _state = ST_PLAY;
   char     _target[kWordLen + 1] = {};
-  char     _grid[kMaxTries][kWordLen + 1] = {};   // submitted rows (lowercase)
-  uint8_t  _marks[kMaxTries][kWordLen] = {};      // 0 grey 1 yellow 2 green
+  char     _grid[kMaxTries][kWordLen + 1] = {};    // submitted rows (uppercase)
+  uint8_t  _marks[kMaxTries][kWordLen] = {};
   uint8_t  _row = 0;
   uint8_t  _col = 0;
-  char     _letter = 'A';      // letter at the cursor
-  char     _entry[kWordLen] = { 'A','A','A','A','A' };  // chosen letter per cell
-  uint32_t _seed = 0;
+  char     _entry[kWordLen] = { 'A','A','A','A','A' };   // letter per cell
+
+  GameNav  _nav;
 
   lv_obj_t* _arena = nullptr;
   lv_obj_t* _cells[kMaxTries][kWordLen] = {};
-  lv_obj_t* _hint  = nullptr;
+  lv_obj_t* _hint = nullptr;
   lv_obj_t* _overlay = nullptr;
-  lv_obj_t* _ovTitle = nullptr;
-  lv_obj_t* _ovSub   = nullptr;
 
   void _build();
   void _pickWord();
-  void _cycle(int dir);
+  void _refreshRow(int row);
+  void _markRow(int row);
   void _submitRow();
-  void _refreshRow(uint8_t row);
-  void _markRow(uint8_t row);
   void _showEnd(bool win);
   void _hideOverlay();
+  void _reset();
 };
 
 #else  // legacy — original implementation from the repo
